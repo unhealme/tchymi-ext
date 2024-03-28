@@ -47,7 +47,8 @@ import uy.kohesive.injekt.injectLazy
 import java.security.MessageDigest
 import java.util.Locale
 
-open class Komga(private val suffix: String = "") : ConfigurableSource, UnmeteredSource, HttpSource() {
+open class Komga(private val suffix: String = "") : ConfigurableSource, UnmeteredSource,
+    HttpSource() {
 
     internal val preferences: SharedPreferences by lazy {
         Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
@@ -73,7 +74,8 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
     override val id by lazy {
         val key = "komga${if (suffix.isNotBlank()) " ($suffix)" else ""}/en/$versionId"
         val bytes = MessageDigest.getInstance("MD5").digest(key.toByteArray())
-        (0..7).map { bytes[it].toLong() and 0xff shl 8 * (7 - it) }.reduce(Long::or) and Long.MAX_VALUE
+        (0..7).map { bytes[it].toLong() and 0xff shl 8 * (7 - it) }
+            .reduce(Long::or) and Long.MAX_VALUE
     }
 
     private val username by lazy { preferences.getString(PREF_USERNAME, "")!! }
@@ -137,11 +139,14 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
             else -> "series"
         }
 
-        val url = "$baseUrl/api/v1/$type?search=$query&page=${page - 1}&deleted=false".toHttpUrl().newBuilder()
+        val url = "$baseUrl/api/v1/$type?search=$query&page=${page - 1}&deleted=false".toHttpUrl()
+            .newBuilder()
         val filterList = filters.ifEmpty { getFilterList() }
         val defaultLibraries = defaultLibraries
 
-        if (filterList.filterIsInstance<LibraryFilter>().isEmpty() && defaultLibraries.isNotEmpty()) {
+        if (filterList.filterIsInstance<LibraryFilter>()
+                .isEmpty() && defaultLibraries.isNotEmpty()
+        ) {
             url.addQueryParameter("library_id", defaultLibraries.joinToString(","))
         }
 
@@ -156,11 +161,14 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
                         1 -> if (type == "series") "metadata.titleSort" else "name"
                         2 -> "createdDate"
                         3 -> "lastModifiedDate"
+                        4 -> "booksMetadata.releaseDate"
+                        5 -> "booksCount"
                         else -> return@forEach
                     } + "," + if (state.ascending) "asc" else "desc"
 
                     url.addQueryParameter("sort", sortCriteria)
                 }
+
                 else -> {}
             }
         }
@@ -172,13 +180,23 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
         processSeriesPage(response, baseUrl)
 
     private fun processSeriesPage(response: Response, baseUrl: String): MangasPage {
-        val data = if (response.isFromReadList()) {
-            response.parseAs<PageWrapperDto<ReadListDto>>()
+        if (response.isFromReadList()) {
+            val data = response.parseAs<PageWrapperDto<ReadListDto>>()
+            return MangasPage(
+                data.content.map {
+                    it.toSManga(baseUrl)
+                },
+                !data.last,
+            )
         } else {
-            response.parseAs<PageWrapperDto<SeriesDto>>()
+            val data = response.parseAs<PageWrapperDto<SeriesDto>>()
+            return MangasPage(
+                data.content.map {
+                    it.toSManga(baseUrl, collections)
+                },
+                !data.last,
+            )
         }
-
-        return MangasPage(data.content.map { it.toSManga(baseUrl) }, !data.last)
     }
 
     override fun getMangaUrl(manga: SManga) = manga.url.replace("/api/v1", "")
@@ -189,12 +207,15 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
         return if (response.isFromReadList()) {
             response.parseAs<ReadListDto>().toSManga(baseUrl)
         } else {
-            response.parseAs<SeriesDto>().toSManga(baseUrl)
+            response.parseAs<SeriesDto>().toSManga(baseUrl, collections)
         }
     }
 
     private val chapterNameTemplate
-        get() = preferences.getString(PREF_CHAPTER_NAME_TEMPLATE, PREF_CHAPTER_NAME_TEMPLATE_DEFAULT)!!
+        get() = preferences.getString(
+            PREF_CHAPTER_NAME_TEMPLATE,
+            PREF_CHAPTER_NAME_TEMPLATE_DEFAULT,
+        )!!
 
     override fun getChapterUrl(chapter: SChapter) = chapter.url.replace("/api/v1/books", "/book")
 
@@ -290,19 +311,32 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
                 "publisher",
                 publishers.map { UriMultiSelectOption(it) },
             ),
+            UriMultiSelectFilter(
+                "Language",
+                "language",
+                languages.map { UriMultiSelectOption(langFromCode(it, "Unknown"), it) },
+            ),
         ).apply {
             if (fetchFilterStatus != FetchFilterStatus.FETCHED) {
-                val message = if (fetchFilterStatus == FetchFilterStatus.NOT_FETCHED && fetchFiltersAttempts >= 3) {
-                    "Failed to fetch filtering options from the server"
-                } else {
-                    "Press 'Reset' to show filtering options"
-                }
+                val message =
+                    if (fetchFilterStatus == FetchFilterStatus.NOT_FETCHED && fetchFiltersAttempts >= 3) {
+                        "Failed to fetch filtering options from the server"
+                    } else {
+                        "Press 'Reset' to show filtering options"
+                    }
 
                 add(0, Filter.Header(message))
                 add(1, Filter.Separator())
             }
 
-            addAll(authors.map { (role, authors) -> AuthorGroup(role, authors.map { AuthorFilter(it) }) })
+            addAll(
+                authors.map { (role, authors) ->
+                    AuthorGroup(
+                        role,
+                        authors.map { AuthorFilter(it) },
+                    )
+                },
+            )
             add(SeriesSort())
         }
 
@@ -316,13 +350,18 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
             ListPreference(screen.context).apply {
                 key = PREF_EXTRA_SOURCES_COUNT
                 title = "Number of extra sources"
-                summary = "Number of additional sources to create. There will always be at least one Komga source."
+                summary =
+                    "Number of additional sources to create. There will always be at least one Komga source."
                 entries = PREF_EXTRA_SOURCES_ENTRIES
                 entryValues = PREF_EXTRA_SOURCES_ENTRIES
 
                 setDefaultValue(PREF_EXTRA_SOURCES_DEFAULT)
                 setOnPreferenceChangeListener { _, _ ->
-                    Toast.makeText(screen.context, "Restart Tachiyomi to apply new setting.", Toast.LENGTH_LONG).show()
+                    Toast.makeText(
+                        screen.context,
+                        "Restart Tachiyomi to apply new setting.",
+                        Toast.LENGTH_LONG,
+                    ).show()
                     true
                 }
             }.also(screen::addPreference)
@@ -425,6 +464,7 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
     private var genres = emptySet<String>()
     private var tags = emptySet<String>()
     private var publishers = emptySet<String>()
+    private var languages = emptySet<String>()
     private var authors = emptyMap<String, List<AuthorDto>>() // roles to list of authors
 
     private var fetchFilterStatus = FetchFilterStatus.NOT_FETCHED
@@ -450,6 +490,7 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
                 genres = client.newCall(GET("$baseUrl/api/v1/genres")).await().parseAs()
                 tags = client.newCall(GET("$baseUrl/api/v1/tags")).await().parseAs()
                 publishers = client.newCall(GET("$baseUrl/api/v1/publishers")).await().parseAs()
+                languages = client.newCall(GET("$baseUrl/api/v1/languages")).await().parseAs()
                 authors = client
                     .newCall(GET("$baseUrl/api/v1/authors"))
                     .await()
@@ -493,6 +534,14 @@ private const val PREF_USERNAME = "Username"
 private const val PREF_PASSWORD = "Password"
 private const val PREF_DEFAULT_LIBRARIES = "Default libraries"
 private const val PREF_CHAPTER_NAME_TEMPLATE = "Chapter name template"
-private const val PREF_CHAPTER_NAME_TEMPLATE_DEFAULT = "{number} - {title} ({size})"
+private const val PREF_CHAPTER_NAME_TEMPLATE_DEFAULT = "{number} - {title} ({pages}p, {size})"
 
-private val SUPPORTED_IMAGE_TYPES = listOf("image/jpeg", "image/png", "image/gif", "image/webp", "image/jxl", "image/heif", "image/avif")
+private val SUPPORTED_IMAGE_TYPES = listOf(
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+    "image/jxl",
+    "image/heif",
+    "image/avif",
+)

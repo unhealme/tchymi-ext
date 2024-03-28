@@ -19,7 +19,14 @@ internal class TypeSelect : Filter.Select<String>(
 
 internal class SeriesSort(selection: Selection? = null) : Filter.Sort(
     "Sort",
-    arrayOf("Relevance", "Alphabetically", "Date added", "Date updated"),
+    arrayOf(
+        "Relevance",
+        "Alphabetically",
+        "Date added",
+        "Date updated",
+        "Release date",
+        "Books count",
+    ),
     selection ?: Selection(0, false),
 )
 
@@ -67,7 +74,8 @@ internal class LibraryFilter(
     },
 )
 
-internal class UriMultiSelectOption(name: String, val id: String = name) : Filter.CheckBox(name, false)
+internal class UriMultiSelectOption(name: String, val id: String = name) :
+    Filter.CheckBox(name, false)
 
 internal open class UriMultiSelectFilter(
     name: String,

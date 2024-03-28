@@ -1,12 +1,9 @@
 package eu.kanade.tachiyomi.extension.all.komga.dto
 
+import eu.kanade.tachiyomi.extension.all.komga.langFromCode
 import eu.kanade.tachiyomi.source.model.SManga
 import kotlinx.serialization.Serializable
 import org.apache.commons.text.StringSubstitutor
-
-interface ConvertibleToSManga {
-    fun toSManga(baseUrl: String): SManga
-}
 
 @Serializable
 class LibraryDto(
@@ -25,26 +22,33 @@ class SeriesDto(
     val booksCount: Int,
     val metadata: SeriesMetadataDto,
     val booksMetadata: BookMetadataAggregationDto,
-) : ConvertibleToSManga {
-    override fun toSManga(baseUrl: String) = SManga.create().apply {
-        title = metadata.title
-        url = "$baseUrl/api/v1/series/$id"
-        thumbnail_url = "$url/thumbnail"
-        status = when {
-            metadata.status == "ENDED" && metadata.totalBookCount != null && booksCount < metadata.totalBookCount -> SManga.PUBLISHING_FINISHED
-            metadata.status == "ENDED" -> SManga.COMPLETED
-            metadata.status == "ONGOING" -> SManga.ONGOING
-            metadata.status == "ABANDONED" -> SManga.CANCELLED
-            metadata.status == "HIATUS" -> SManga.ON_HIATUS
-            else -> SManga.UNKNOWN
+) {
+    fun toSManga(baseUrl: String, collections: List<CollectionDto>): SManga =
+        SManga.create().apply {
+            title = metadata.title
+            url = "$baseUrl/api/v1/series/$id"
+            thumbnail_url = "$url/thumbnail"
+            status = when {
+                metadata.status == "ENDED" && metadata.totalBookCount != null && booksCount < metadata.totalBookCount -> SManga.PUBLISHING_FINISHED
+                metadata.status == "ENDED" -> SManga.COMPLETED
+                metadata.status == "ONGOING" -> SManga.ONGOING
+                metadata.status == "ABANDONED" -> SManga.CANCELLED
+                metadata.status == "HIATUS" -> SManga.ON_HIATUS
+                else -> SManga.UNKNOWN
+            }
+            genre =
+                (metadata.genres + metadata.tags + booksMetadata.tags).distinct().joinToString(", ")
+            description = listOf(
+                "Language: " + langFromCode(metadata.language, "Unknown"),
+                "Collection: " + (collections.filter { it.seriesIds.contains(id) }).joinToString(", ") { it.name },
+                "",
+                metadata.summary.ifBlank { booksMetadata.summary },
+            ).joinToString("\n")
+            booksMetadata.authors.groupBy({ it.role }, { it.name }).let { map ->
+                author = map["writer"]?.distinct()?.joinToString()
+                artist = map["penciller"]?.distinct()?.joinToString()
+            }
         }
-        genre = (metadata.genres + metadata.tags + booksMetadata.tags).distinct().joinToString(", ")
-        description = metadata.summary.ifBlank { booksMetadata.summary }
-        booksMetadata.authors.groupBy({ it.role }, { it.name }).let { map ->
-            author = map["writer"]?.distinct()?.joinToString()
-            artist = map["penciller"]?.distinct()?.joinToString()
-        }
-    }
 }
 
 @Serializable
@@ -107,6 +111,7 @@ class BookDto(
             "releaseDate" to metadata.releaseDate,
             "size" to size,
             "sizeBytes" to sizeBytes.toString(),
+            "pages" to media.pagesCount.toString(),
         )
         val sub = StringSubstitutor(values, "{", "}")
 
@@ -179,8 +184,8 @@ class ReadListDto(
     val createdDate: String,
     val lastModifiedDate: String,
     val filtered: Boolean,
-) : ConvertibleToSManga {
-    override fun toSManga(baseUrl: String) = SManga.create().apply {
+) {
+    fun toSManga(baseUrl: String): SManga = SManga.create().apply {
         title = name
         description = summary
         url = "$baseUrl/api/v1/readlists/$id"

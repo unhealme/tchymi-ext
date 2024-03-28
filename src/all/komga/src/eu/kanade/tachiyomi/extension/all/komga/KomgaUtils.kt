@@ -16,6 +16,44 @@ val formatterDate = SimpleDateFormat("yyyy-MM-dd", Locale.US)
 val formatterDateTime = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
     .apply { timeZone = TimeZone.getTimeZone("UTC") }
 
+private val langISOMap = mapOf<String, String>(
+    "ar" to "Arabic",
+    "bg" to "Bulgarian",
+    "ca" to "Catalan",
+    "cs" to "Czech",
+    "da" to "Danish",
+    "de" to "German",
+    "el" to "Greek",
+    "en" to "English",
+    "es" to "Spanish",
+    "fi" to "Finnish",
+    "fr" to "French",
+    "he" to "Hebrew",
+    "hu" to "Hungarian",
+    "id" to "Indonesian",
+    "it" to "Italian",
+    "ja" to "Japanese",
+    "ko" to "Korean",
+    "ms" to "Malay",
+    "nl" to "Dutch",
+    "no" to "Norwegian",
+    "pl" to "Polish",
+    "pt" to "Portuguese",
+    "ro" to "Romanian",
+    "ru" to "Russian",
+    "sv" to "Swedish",
+    "th" to "Thai",
+    "tr" to "Turkish",
+    "vi" to "Vietnamese",
+    "zh" to "Chinese",
+)
+
+fun langFromCode(code: String, def: String = "Other"): String =
+    langISOMap.filterKeys { it == code }.values.firstOrNull() ?: def
+
+fun codeFromLang(lang: String, def: String = "N/A"): String =
+    langISOMap.filterValues { it == lang }.keys.firstOrNull() ?: def
+
 fun parseDate(date: String): Long = try {
     formatterDate.parse(date)!!.time
 } catch (_: ParseException) {
@@ -55,9 +93,21 @@ fun PreferenceScreen.addEditTextPreference(
             if (validate != null) {
                 editText.addTextChangedListener(
                     object : TextWatcher {
-                        override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                        override fun beforeTextChanged(
+                            s: CharSequence?,
+                            start: Int,
+                            count: Int,
+                            after: Int,
+                        ) {
+                        }
 
-                        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                        override fun onTextChanged(
+                            s: CharSequence?,
+                            start: Int,
+                            before: Int,
+                            count: Int,
+                        ) {
+                        }
 
                         override fun afterTextChanged(editable: Editable?) {
                             requireNotNull(editable)
@@ -81,7 +131,11 @@ fun PreferenceScreen.addEditTextPreference(
                 val result = text.isBlank() || validate?.invoke(text) ?: true
 
                 if (restartRequired && result) {
-                    Toast.makeText(context, "Restart Tachiyomi to apply new setting.", Toast.LENGTH_LONG).show()
+                    Toast.makeText(
+                        context,
+                        "Restart Tachiyomi to apply new setting.",
+                        Toast.LENGTH_LONG,
+                    ).show()
                 }
 
                 result
