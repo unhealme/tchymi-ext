@@ -37,10 +37,10 @@ class SeriesDto(
                 else -> SManga.UNKNOWN
             }
             genre = (
-                collections.filter { it.seriesIds.contains(id) }.map { "Collection:${it.name}" } +
-                    listOf("Language:${langFromCode(metadata.language, "Unknown")}") +
-                    metadata.genres.map { "Genre:$it" } +
-                    (metadata.tags + booksMetadata.tags).distinct().map { "Tag:$it" }
+                collections.filter { it.seriesIds.contains(id) }.map { "collection:${it.name}" } +
+                    listOf("language:${langFromCode(metadata.language, "Unknown")}") +
+                    metadata.genres.map { "genre:$it" } +
+                    (metadata.tags + booksMetadata.tags).distinct().map { "tag:$it" }
                 ).joinToString(", ")
             description = metadata.summary.ifBlank { booksMetadata.summary }
             booksMetadata.authors.groupBy({ it.role }, { it.name }).let { map ->
