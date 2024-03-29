@@ -26,6 +26,7 @@ internal class SeriesSort(selection: Selection? = null) : Filter.Sort(
         "Date updated",
         "Release date",
         "Books count",
+        "Folder name",
     ),
     selection ?: Selection(0, false),
 )

@@ -163,6 +163,7 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
                         3 -> "lastModifiedDate"
                         4 -> "booksMetadata.releaseDate"
                         5 -> "booksCount"
+                        6 -> "name"
                         else -> return@forEach
                     } + "," + if (state.ascending) "asc" else "desc"
 
