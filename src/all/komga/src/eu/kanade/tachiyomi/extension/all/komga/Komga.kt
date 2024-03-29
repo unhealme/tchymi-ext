@@ -145,7 +145,7 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
         val defaultLibraries = defaultLibraries
 
         if (filterList.filterIsInstance<LibraryFilter>()
-                .isEmpty() && defaultLibraries.isNotEmpty()
+            .isEmpty() && defaultLibraries.isNotEmpty()
         ) {
             url.addQueryParameter("library_id", defaultLibraries.joinToString(","))
         }
@@ -236,9 +236,8 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
                     chapter_number = if (!isFromReadList) book.metadata.numberSort else index + 1F
                     url = "$baseUrl/api/v1/books/${book.id}"
                     name = book.getChapterName(chapterNameTemplate, isFromReadList)
-                    scanlator = book.metadata.authors
-                        .filter { it.role == "translator" }
-                        .joinToString { it.name }
+                    scanlator =
+                        if (isFromReadList) "" else book.getChapterName("{pages}p | {size}", false)
                     date_upload = when {
                         book.metadata.releaseDate != null -> parseDate(book.metadata.releaseDate)
                         book.created != null -> parseDateTime(book.created)
@@ -534,7 +533,7 @@ private const val PREF_USERNAME = "Username"
 private const val PREF_PASSWORD = "Password"
 private const val PREF_DEFAULT_LIBRARIES = "Default libraries"
 private const val PREF_CHAPTER_NAME_TEMPLATE = "Chapter name template"
-private const val PREF_CHAPTER_NAME_TEMPLATE_DEFAULT = "{number} - {title} ({pages}p, {size})"
+private const val PREF_CHAPTER_NAME_TEMPLATE_DEFAULT = "{number} - {title}"
 
 private val SUPPORTED_IMAGE_TYPES = listOf(
     "image/jpeg",

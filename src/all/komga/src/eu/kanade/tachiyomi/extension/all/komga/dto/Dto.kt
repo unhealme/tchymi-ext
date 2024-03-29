@@ -36,14 +36,13 @@ class SeriesDto(
                 metadata.status == "HIATUS" -> SManga.ON_HIATUS
                 else -> SManga.UNKNOWN
             }
-            genre =
-                (metadata.genres + metadata.tags + booksMetadata.tags).distinct().joinToString(", ")
-            description = listOf(
-                "Language: " + langFromCode(metadata.language, "Unknown"),
-                "Collection: " + (collections.filter { it.seriesIds.contains(id) }).joinToString(", ") { it.name },
-                "",
-                metadata.summary.ifBlank { booksMetadata.summary },
-            ).joinToString("\n")
+            genre = (
+                collections.filter { it.seriesIds.contains(id) }.map { "Collection:${it.name}" } +
+                    listOf("Language:${langFromCode(metadata.language, "Unknown")}") +
+                    metadata.genres.map { "Genre:$it" } +
+                    (metadata.tags + booksMetadata.tags).distinct().map { "Tag:$it" }
+                ).joinToString(", ")
+            description = metadata.summary.ifBlank { booksMetadata.summary }
             booksMetadata.authors.groupBy({ it.role }, { it.name }).let { map ->
                 author = map["writer"]?.distinct()?.joinToString()
                 artist = map["penciller"]?.distinct()?.joinToString()
