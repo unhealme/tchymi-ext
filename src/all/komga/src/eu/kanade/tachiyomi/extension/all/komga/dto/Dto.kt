@@ -23,8 +23,9 @@ class SeriesDto(
     val metadata: SeriesMetadataDto,
     val booksMetadata: BookMetadataAggregationDto,
 ) {
-    fun toSManga(baseUrl: String, collections: List<CollectionDto>): SManga =
-        SManga.create().apply {
+    fun toSManga(baseUrl: String, collections: List<CollectionDto>): SManga {
+        val lang = langFromCode(metadata.language, metadata.language)
+        return SManga.create().apply {
             title = metadata.title
             url = "$baseUrl/api/v1/series/$id"
             thumbnail_url = "$url/thumbnail"
@@ -38,7 +39,7 @@ class SeriesDto(
             }
             genre = (
                 collections.filter { it.seriesIds.contains(id) }.map { "collection:${it.name}" } +
-                    listOf("language:${langFromCode(metadata.language, "Unknown")}") +
+                    (if (lang.isBlank()) listOf() else listOf("language:$lang")) +
                     metadata.genres.map { "genre:$it" } +
                     (metadata.tags + booksMetadata.tags).distinct().map { "tag:$it" }
                 ).joinToString(", ")
@@ -48,6 +49,7 @@ class SeriesDto(
                 artist = map["penciller"]?.distinct()?.joinToString()
             }
         }
+    }
 }
 
 @Serializable
