@@ -57,8 +57,9 @@ class Hitomi(
 
     override fun fetchPopularManga(page: Int): Observable<MangasPage> = Observable.fromCallable {
         runBlocking {
-            val entries = getGalleryIDsFromNozomi("popular", "today", nozomiLang, page.nextPageRange())
-                .toMangaList()
+            val entries =
+                getGalleryIDsFromNozomi("popular", "today", nozomiLang, page.nextPageRange())
+                    .toMangaList()
 
             MangasPage(entries, entries.size >= 24)
         }
@@ -75,16 +76,64 @@ class Hitomi(
 
     private lateinit var searchResponse: List<Int>
 
-    override fun fetchSearchManga(page: Int, query: String, filters: FilterList): Observable<MangasPage> = Observable.fromCallable {
+    private var lastIndex: Int = 0
+
+    override fun fetchSearchManga(
+        page: Int,
+        query: String,
+        filters: FilterList,
+    ): Observable<MangasPage> = Observable.fromCallable {
         runBlocking {
+            var useRegex = false
+            var sortByPopularity = false
+            var whitelistMode = "AND"
+            var blacklistMode = "OR"
+            filters.forEach { filter ->
+                when (filter) {
+                    is RegexQueryFilter -> {
+                        useRegex = filter.state
+                    }
+
+                    is SortFilter -> {
+                        sortByPopularity = filter.state == 1
+                    }
+
+                    is WhitelistFilter -> {
+                        whitelistMode = WhitelistFilter().values[filter.state]
+                    }
+
+                    is BlacklistFilter -> {
+                        blacklistMode = BlacklistFilter().values[filter.state]
+                    }
+
+                    else -> {}
+                }
+            }
             if (page == 1) {
+                lastIndex = 0
                 searchResponse = hitomiSearch(
-                    query.trim(),
-                    filters.filterIsInstance<SortFilter>().firstOrNull()?.state == 1,
+                    if (useRegex) "" else query.trim(),
+                    sortByPopularity,
+                    whitelistMode,
+                    blacklistMode,
                     nozomiLang,
                 ).toList()
             }
 
+            /* incomplete regex search mechanism
+            var entries = listOf<SManga>()
+            var start = max((page - 1) * 25, lastIndex)
+            var end = min(lastIndex + page * 25, searchResponse.size)
+
+            while (entries.isEmpty() && start <= end) {
+            entries = searchResponse.subList(start, end)
+            .toMangaList(if (useRegex) query.trim() else "")
+            lastIndex = (start + 26).also { start = it }
+            end = min(lastIndex + page * 25, searchResponse.size)
+            }
+
+            MangasPage(entries, lastIndex < searchResponse.size)
+             */
             val end = min(page * 25, searchResponse.size)
             val entries = searchResponse.subList((page - 1) * 25, end)
                 .toMangaList()
@@ -94,9 +143,12 @@ class Hitomi(
     }
 
     private class SortFilter : Filter.Select<String>("Sort By", arrayOf("Updated", "Popularity"))
+    private class WhitelistFilter : Filter.Select<String>("Whitelist Mode", arrayOf("AND", "OR"), 0)
+    private class BlacklistFilter : Filter.Select<String>("Blacklist Mode", arrayOf("AND", "OR"), 1)
+    private class RegexQueryFilter : Filter.CheckBox("Regex Query")
 
     override fun getFilterList(): FilterList {
-        return FilterList(SortFilter())
+        return FilterList(WhitelistFilter(), BlacklistFilter(), SortFilter())
     }
 
     private fun Int.nextPageRange(): LongRange {
@@ -118,6 +170,8 @@ class Hitomi(
     private suspend fun hitomiSearch(
         query: String,
         sortByPopularity: Boolean = false,
+        whitelistMode: String = "AND",
+        blacklistMode: String = "OR",
         language: String = "all",
     ): Set<Int> =
         coroutineScope {
@@ -162,27 +216,46 @@ class Hitomi(
                 positiveTerms.isEmpty() -> getGalleryIDsFromNozomi(null, "index", language)
                 else -> emptySet()
             }.toMutableSet()
+            val blacklists = mutableSetOf<Int>()
+            val whitelists = mutableSetOf<Int>()
 
             fun filterPositive(newResults: Set<Int>) {
                 when {
-                    results.isEmpty() -> results.addAll(newResults)
-                    else -> results.retainAll(newResults)
+                    whitelists.isEmpty() -> whitelists.addAll(newResults)
+                    else -> if (whitelistMode == "AND") {
+                        whitelists.retainAll(newResults)
+                    } else {
+                        whitelists.addAll(newResults)
+                    }
                 }
             }
 
             fun filterNegative(newResults: Set<Int>) {
-                results.removeAll(newResults)
+                when {
+                    blacklists.isEmpty() -> blacklists.addAll(newResults)
+                    else -> if (blacklistMode == "AND") {
+                        blacklists.retainAll(newResults)
+                    } else {
+                        blacklists.addAll(newResults)
+                    }
+                }
             }
 
             // positive results
             positiveResults.forEach {
                 filterPositive(it.await())
+            }.run {
+                if (results.isEmpty()) {
+                    results.addAll(whitelists.sortedDescending())
+                } else {
+                    results.retainAll(whitelists)
+                }
             }
 
             // negative results
             negativeResults.forEach {
                 filterNegative(it.await())
-            }
+            }.run { results.removeAll(blacklists) }
 
             results
         }
@@ -411,17 +484,60 @@ class Hitomi(
         return MessageDigest.getInstance("SHA-256").digest(data)
     }
 
-    private suspend fun Collection<Int>.toMangaList() = coroutineScope {
-        map { id ->
-            async {
-                runCatching {
-                    client.newCall(GET("$ltnUrl/galleries/$id.js", headers))
-                        .awaitSuccess()
-                        .parseScriptAs<Gallery>()
-                        .toSManga()
-                }.getOrNull()
+    private suspend fun Collection<Int>.toMangaList() =
+        coroutineScope {
+            map { id ->
+                async {
+                    runCatching {
+                        client.newCall(GET("$ltnUrl/galleries/$id.js", headers))
+                            .awaitSuccess()
+                            .parseScriptAs<Gallery>()
+                            // .filterByRegex(query)
+                            .toSManga()
+                    }.getOrNull()
+                }
+            }.awaitAll().filterNotNull()
+        }
+
+    private fun Gallery.filterByRegex(query: String): Gallery {
+        val terms = query
+            .trim()
+            .replace(Regex("""^\?"""), "")
+            .split(Regex("\\s+"))
+            .map {
+                it.replace('_', ' ')
             }
-        }.awaitAll().filterNotNull()
+        if (terms.firstOrNull().isNullOrEmpty()) return this
+
+        val positiveTerms = LinkedList<Regex>()
+        val negativeTerms = LinkedList<Regex>()
+
+        for (term in terms) {
+            if (term.startsWith("-")) {
+                negativeTerms.push(Regex(term.removePrefix("-"), RegexOption.IGNORE_CASE))
+            } else if (term.isNotBlank()) {
+                positiveTerms.push(Regex(term, RegexOption.IGNORE_CASE))
+            }
+        }
+
+        /**@return return true if all of 'pattern' is matching any of 'tags'*/
+        fun matchAll(pattern: Iterable<Regex>, tags: Iterable<String>): Boolean {
+            return pattern.all { p -> tags.any { p.matches(it) } }
+        }
+
+        /**@return return true if any of 'pattern' is matching any of 'tags'*/
+        fun matchAny(pattern: Iterable<Regex>, tags: Iterable<String>): Boolean {
+            return pattern.any { p -> tags.any { p.matches(it) } }
+        }
+
+        if (!matchAll(positiveTerms, this.galleryinfo)) {
+            throw Exception("whitelist tags requirement is not met")
+        }
+
+        if (matchAny(negativeTerms, this.galleryinfo)) {
+            throw Exception("blacklist tags requirement is met")
+        }
+        return this
     }
 
     private suspend fun Gallery.toSManga() = SManga.create().apply {
@@ -429,7 +545,15 @@ class Hitomi(
         url = galleryurl
         author = groups?.joinToString { it.formatted }
         artist = artists?.joinToString { it.formatted }
-        genre = tags?.joinToString { it.formatted }
+        genre = listOf(
+            *((artists?.map { "Artist:${it.formatted}" } ?: emptyList()).toTypedArray()),
+            *((groups?.map { "Group:${it.formatted}" } ?: emptyList()).toTypedArray()),
+            "Type:$type",
+            "Language:${language.replaceFirstChar { it.uppercase() }}",
+            *((parodys?.map { "Series:${it.formatted}" } ?: emptyList()).toTypedArray()),
+            *((characters?.map { "Character:${it.formatted}" } ?: emptyList()).toTypedArray()),
+            *((tags?.map { it.formatted } ?: emptyList()).toTypedArray()),
+        ).joinToString()
         thumbnail_url = files.first().let {
             val hash = it.hash
             val imageId = imageIdFromHash(hash)
@@ -438,13 +562,8 @@ class Hitomi(
             "https://${subDomain}tn.$domain/webpbigtn/${thumbPathFromHash(hash)}/$hash.webp"
         }
         description = buildString {
-            characters?.joinToString { it.formatted }?.let {
-                append("Characters: ", it, "\n")
-            }
-            parodys?.joinToString { it.formatted }?.let {
-                append("Parodies: ", it, "\n")
-            }
-            append("Pages: ", files.size)
+            append("Gallery ID: $id", "\n")
+            if (!japanese_title.isNullOrBlank()) append("Japanese Title: $japanese_title", "\n")
         }
         status = SManga.COMPLETED
         update_strategy = UpdateStrategy.ONLY_FETCH_ONCE
@@ -481,7 +600,7 @@ class Hitomi(
             SChapter.create().apply {
                 name = "Chapter"
                 url = mangaUrl
-                scanlator = gallery.type
+                scanlator = "${gallery.files.size} Pages"
                 date_upload = runCatching {
                     dateFormat.parse(gallery.date.substringBeforeLast("-"))!!.time
                 }.getOrDefault(0L)
@@ -600,7 +719,9 @@ class Hitomi(
     override fun popularMangaRequest(page: Int) = throw UnsupportedOperationException()
     override fun latestUpdatesRequest(page: Int) = throw UnsupportedOperationException()
     override fun latestUpdatesParse(response: Response) = throw UnsupportedOperationException()
-    override fun searchMangaRequest(page: Int, query: String, filters: FilterList) = throw UnsupportedOperationException()
+    override fun searchMangaRequest(page: Int, query: String, filters: FilterList) =
+        throw UnsupportedOperationException()
+
     override fun searchMangaParse(response: Response) = throw UnsupportedOperationException()
     override fun imageUrlParse(response: Response) = throw UnsupportedOperationException()
 }

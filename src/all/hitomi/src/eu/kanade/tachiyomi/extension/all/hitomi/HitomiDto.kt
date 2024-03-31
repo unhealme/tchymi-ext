@@ -7,15 +7,33 @@ import kotlinx.serialization.json.JsonPrimitive
 data class Gallery(
     val galleryurl: String,
     val title: String,
+    val language: String,
     val date: String,
     val type: String,
+    val id: String,
+    val japanese_title: String?,
     val tags: List<Tag>?,
     val artists: List<Artist>?,
     val groups: List<Group>?,
     val characters: List<Character>?,
     val parodys: List<Parody>?,
     val files: List<ImageFile>,
-)
+) {
+    val galleryinfo: List<String>
+        get() = (
+            listOf(
+                title,
+                "url:$galleryurl",
+                "type:$type",
+                "id:$id",
+            ) +
+                (tags?.map { it.formatted } ?: emptyList()) +
+                (artists?.map { "artist:${it.artist}" } ?: emptyList()) +
+                (groups?.map { "group:${it.group}" } ?: emptyList()) +
+                (characters?.map { "character:${it.character}" } ?: emptyList()) +
+                (parodys?.map { "series:${it.parody}" } ?: emptyList())
+            )
+}
 
 @Serializable
 data class ImageFile(
@@ -28,13 +46,14 @@ data class Tag(
     val male: JsonPrimitive?,
     val tag: String,
 ) {
-    val formatted get() = if (female?.content == "1") {
-        "${tag.toCamelCase()} (Female)"
-    } else if (male?.content == "1") {
-        "${tag.toCamelCase()} (Male)"
-    } else {
-        tag.toCamelCase()
-    }
+    val formatted
+        get() = if (female?.content == "1") {
+            "Female:${tag.toCamelCase()}"
+        } else if (male?.content == "1") {
+            "Male:${tag.toCamelCase()}"
+        } else {
+            "Tag:${tag.toCamelCase()}"
+        }
 }
 
 @Serializable
