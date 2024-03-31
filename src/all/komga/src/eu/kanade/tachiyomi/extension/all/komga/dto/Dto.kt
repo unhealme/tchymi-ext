@@ -39,7 +39,7 @@ class SeriesDto(
             }
             genre = (
                 collections.filter { it.seriesIds.contains(id) }.map { "collection:${it.name}" } +
-                    (if (lang.isBlank()) listOf() else listOf("language:$lang")) +
+                    (if (lang.isBlank()) emptyList() else listOf("language:$lang")) +
                     metadata.genres.map { "genre:$it" } +
                     (metadata.tags + booksMetadata.tags).distinct().map { "tag:$it" }
                 ).joinToString(", ")
