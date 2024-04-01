@@ -552,7 +552,12 @@ class Hitomi(
             "Language:${language.replaceFirstChar { it.uppercase() }}",
             *((parodys?.map { "Series:${it.formatted}" } ?: emptyList()).toTypedArray()),
             *((characters?.map { "Character:${it.formatted}" } ?: emptyList()).toTypedArray()),
-            *((tags?.map { it.formatted } ?: emptyList()).toTypedArray()),
+            *(
+                (
+                    tags?.map { it.formatted }?.sortedBy { it.lowercase() }
+                        ?: emptyList()
+                    ).toTypedArray()
+                ),
         ).joinToString()
         thumbnail_url = files.first().let {
             val hash = it.hash
