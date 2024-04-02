@@ -10,6 +10,8 @@ import java.text.ParseException
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
+import kotlin.random.Random
+import kotlin.random.nextLong
 
 val formatterDate = SimpleDateFormat("yyyy-MM-dd", Locale.US)
     .apply { timeZone = TimeZone.getTimeZone("UTC") }
@@ -53,6 +55,11 @@ fun langFromCode(code: String, def: String = "Other"): String =
 
 fun codeFromLang(lang: String, def: String = "N/A"): String =
     langISOMap.filterValues { it == lang }.keys.firstOrNull() ?: def
+
+fun shufflePages(maxItem: Long): Iterator<Long> =
+    generateSequence { Random.nextLong(0.rangeTo(maxItem)) }
+        .distinct()
+        .iterator()
 
 fun parseDate(date: String): Long = try {
     formatterDate.parse(date)!!.time

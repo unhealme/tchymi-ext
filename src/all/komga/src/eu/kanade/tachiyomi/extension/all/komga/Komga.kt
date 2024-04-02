@@ -14,6 +14,7 @@ import eu.kanade.tachiyomi.extension.all.komga.dto.BookDto
 import eu.kanade.tachiyomi.extension.all.komga.dto.CollectionDto
 import eu.kanade.tachiyomi.extension.all.komga.dto.LibraryDto
 import eu.kanade.tachiyomi.extension.all.komga.dto.PageDto
+import eu.kanade.tachiyomi.extension.all.komga.dto.PageWrapperBaseDto
 import eu.kanade.tachiyomi.extension.all.komga.dto.PageWrapperDto
 import eu.kanade.tachiyomi.extension.all.komga.dto.ReadListDto
 import eu.kanade.tachiyomi.extension.all.komga.dto.SeriesDto
@@ -139,7 +140,7 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
             else -> "series"
         }
 
-        val url = "$baseUrl/api/v1/$type?search=$query&page=${page - 1}&deleted=false".toHttpUrl()
+        val url = "$baseUrl/api/v1/$type?search=$query&deleted=false".toHttpUrl()
             .newBuilder()
         val filterList = filters.ifEmpty { getFilterList() }
         val defaultLibraries = defaultLibraries
@@ -155,7 +156,6 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
                 is UriFilter -> filter.addToUri(url)
                 is Filter.Sort -> {
                     val state = filter.state ?: return@forEach
-
                     val sortCriteria = when (state.index) {
                         0 -> "relevance"
                         1 -> if (type == "series") "metadata.titleSort" else "name"
@@ -164,15 +164,43 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
                         4 -> "booksMetadata.releaseDate"
                         5 -> "booksCount"
                         6 -> "name"
+                        7 -> "_random"
                         else -> return@forEach
                     } + "," + if (state.ascending) "asc" else "desc"
 
-                    url.addQueryParameter("sort", sortCriteria)
+                    if (sortCriteria.startsWith("_random")) {
+                        randomSort = true
+                    } else {
+                        randomSort = false
+                        url.addQueryParameter("sort", sortCriteria)
+                    }
                 }
 
                 else -> {}
             }
         }
+
+        if (page == 1) {
+            scope.launch {
+                totalPages = try {
+                    client.newCall(GET(url.build(), headers)).await()
+                        .parseAs<PageWrapperBaseDto>().totalPages
+                } catch (e: Exception) {
+                    0
+                }
+            }
+            pageSequence = shufflePages(totalPages)
+        }
+
+        url.addQueryParameter(
+            "page",
+            if (randomSort && page - 1 <= totalPages) {
+                pageSequence.next()
+                    .toString()
+            } else {
+                "${page - 1}"
+            },
+        )
 
         return GET(url.build(), headers)
     }
@@ -183,18 +211,20 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
     private fun processSeriesPage(response: Response, baseUrl: String): MangasPage {
         if (response.isFromReadList()) {
             val data = response.parseAs<PageWrapperDto<ReadListDto>>()
+            val mangas = data.content.map {
+                it.toSManga(baseUrl)
+            }
             return MangasPage(
-                data.content.map {
-                    it.toSManga(baseUrl)
-                },
+                if (randomSort) mangas.shuffled() else mangas,
                 !data.last,
             )
         } else {
             val data = response.parseAs<PageWrapperDto<SeriesDto>>()
+            val mangas = data.content.map {
+                it.toSManga(baseUrl, collections)
+            }
             return MangasPage(
-                data.content.map {
-                    it.toSManga(baseUrl, collections)
-                },
+                if (randomSort) mangas.shuffled() else mangas,
                 !data.last,
             )
         }
@@ -466,6 +496,10 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
     private var publishers = emptySet<String>()
     private var languages = emptySet<String>()
     private var authors = emptyMap<String, List<AuthorDto>>() // roles to list of authors
+
+    private var randomSort = false
+    private var totalPages: Long = 0
+    private lateinit var pageSequence: Iterator<Long>
 
     private var fetchFilterStatus = FetchFilterStatus.NOT_FETCHED
     private var fetchFiltersAttempts = 0

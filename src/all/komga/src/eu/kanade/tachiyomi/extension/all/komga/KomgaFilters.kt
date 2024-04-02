@@ -27,6 +27,7 @@ internal class SeriesSort(selection: Selection? = null) : Filter.Sort(
         "Release date",
         "Books count",
         "Folder name",
+        "Random",
     ),
     selection ?: Selection(0, false),
 )
