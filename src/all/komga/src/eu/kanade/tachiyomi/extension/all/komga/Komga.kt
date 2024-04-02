@@ -14,7 +14,7 @@ import eu.kanade.tachiyomi.extension.all.komga.dto.BookDto
 import eu.kanade.tachiyomi.extension.all.komga.dto.CollectionDto
 import eu.kanade.tachiyomi.extension.all.komga.dto.LibraryDto
 import eu.kanade.tachiyomi.extension.all.komga.dto.PageDto
-import eu.kanade.tachiyomi.extension.all.komga.dto.PageWrapperBaseDto
+import eu.kanade.tachiyomi.extension.all.komga.dto.PageElementsDto
 import eu.kanade.tachiyomi.extension.all.komga.dto.PageWrapperDto
 import eu.kanade.tachiyomi.extension.all.komga.dto.ReadListDto
 import eu.kanade.tachiyomi.extension.all.komga.dto.SeriesDto
@@ -154,6 +154,7 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
         filterList.forEach { filter ->
             when (filter) {
                 is UriFilter -> filter.addToUri(url)
+                is RandomSort -> randomSort = filter.state
                 is Filter.Sort -> {
                     val state = filter.state ?: return@forEach
                     val sortCriteria = when (state.index) {
@@ -164,16 +165,9 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
                         4 -> "booksMetadata.releaseDate"
                         5 -> "booksCount"
                         6 -> "name"
-                        7 -> "_random"
                         else -> return@forEach
                     } + "," + if (state.ascending) "asc" else "desc"
-
-                    if (sortCriteria.startsWith("_random")) {
-                        randomSort = true
-                    } else {
-                        randomSort = false
-                        url.addQueryParameter("sort", sortCriteria)
-                    }
+                    url.addQueryParameter("sort", sortCriteria)
                 }
 
                 else -> {}
@@ -184,23 +178,24 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
             scope.launch {
                 totalPages = try {
                     client.newCall(GET(url.build(), headers)).await()
-                        .parseAs<PageWrapperBaseDto>().totalPages
+                        .parseAs<PageElementsDto>().totalPages
                 } catch (e: Exception) {
                     0
                 }
             }
-            pageSequence = shufflePages(totalPages)
+            pageSequence = shufflePages(totalPages - 1)
         }
 
         url.addQueryParameter(
             "page",
-            if (randomSort && page <= totalPages) {
+            if (randomSort) {
                 pageSequence.next()
                     .toString()
             } else {
                 "${page - 1}"
             },
         )
+        currentPage = page
 
         return GET(url.build(), headers)
     }
@@ -209,22 +204,27 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
         processSeriesPage(response, baseUrl)
 
     private fun processSeriesPage(response: Response, baseUrl: String): MangasPage {
+        val data: PageWrapperDto<*>
+        val mangas: List<SManga>
         if (response.isFromReadList()) {
-            val data = response.parseAs<PageWrapperDto<ReadListDto>>()
-            val mangas = data.content.map {
+            data = response.parseAs<PageWrapperDto<ReadListDto>>()
+            mangas = data.content.map {
                 it.toSManga(baseUrl)
             }
-            return MangasPage(
-                if (randomSort) mangas.shuffled() else mangas,
-                !data.last,
-            )
         } else {
-            val data = response.parseAs<PageWrapperDto<SeriesDto>>()
-            val mangas = data.content.map {
+            data = response.parseAs<PageWrapperDto<SeriesDto>>()
+            mangas = data.content.map {
                 it.toSManga(baseUrl, collections)
             }
-            return MangasPage(
-                if (randomSort) mangas.shuffled() else mangas,
+        }
+        return if (randomSort) {
+            MangasPage(
+                mangas.shuffled(),
+                currentPage < totalPages,
+            )
+        } else {
+            MangasPage(
+                mangas,
                 !data.last,
             )
         }
@@ -368,6 +368,7 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
                 },
             )
             add(SeriesSort())
+            add(RandomSort())
         }
 
         return FilterList(filters)
@@ -499,6 +500,7 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
 
     private var randomSort = false
     private var totalPages: Long = 0
+    private var currentPage: Int = 0
     private lateinit var pageSequence: Iterator<Long>
 
     private var fetchFilterStatus = FetchFilterStatus.NOT_FETCHED
@@ -538,7 +540,7 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
         }
     }
 
-    fun Response.isFromReadList() = request.url.toString().contains("/api/v1/readlists")
+    private fun Response.isFromReadList() = request.url.toString().contains("/api/v1/readlists")
 
     private inline fun <reified T> Response.parseAs(): T =
         json.decodeFromString(body.string())

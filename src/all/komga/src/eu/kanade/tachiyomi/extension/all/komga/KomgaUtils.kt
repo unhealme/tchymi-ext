@@ -18,7 +18,7 @@ val formatterDate = SimpleDateFormat("yyyy-MM-dd", Locale.US)
 val formatterDateTime = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
     .apply { timeZone = TimeZone.getTimeZone("UTC") }
 
-private val langISOMap = mapOf<String, String>(
+private val langISOMap = mapOf(
     "ar" to "Arabic",
     "bg" to "Bulgarian",
     "ca" to "Catalan",
@@ -57,7 +57,7 @@ fun codeFromLang(lang: String, def: String = "N/A"): String =
     langISOMap.filterValues { it == lang }.keys.firstOrNull() ?: def
 
 fun shufflePages(maxItem: Long): Iterator<Long> =
-    generateSequence { Random.nextLong(0.rangeUntil(maxItem)) }
+    generateSequence { Random.nextLong(0.rangeTo(maxItem)) }
         .distinct()
         .iterator()
 
