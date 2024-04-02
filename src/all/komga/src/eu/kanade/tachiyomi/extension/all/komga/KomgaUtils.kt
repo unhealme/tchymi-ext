@@ -57,7 +57,7 @@ fun codeFromLang(lang: String, def: String = "N/A"): String =
     langISOMap.filterValues { it == lang }.keys.firstOrNull() ?: def
 
 fun shufflePages(maxItem: Long): Iterator<Long> =
-    generateSequence { Random.nextLong(0.rangeTo(maxItem)) }
+    generateSequence { Random.nextLong(0.rangeUntil(maxItem)) }
         .distinct()
         .iterator()
 
