@@ -194,7 +194,7 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
 
         url.addQueryParameter(
             "page",
-            if (randomSort && page - 1 <= totalPages) {
+            if (randomSort && page <= totalPages) {
                 pageSequence.next()
                     .toString()
             } else {
