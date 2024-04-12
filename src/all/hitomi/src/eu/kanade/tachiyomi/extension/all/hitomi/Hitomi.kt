@@ -76,24 +76,17 @@ class Hitomi(
 
     private lateinit var searchResponse: List<Int>
 
-    private var lastIndex: Int = 0
-
     override fun fetchSearchManga(
         page: Int,
         query: String,
         filters: FilterList,
     ): Observable<MangasPage> = Observable.fromCallable {
         runBlocking {
-            var useRegex = false
             var sortByPopularity = false
             var whitelistMode = "AND"
             var blacklistMode = "OR"
             filters.forEach { filter ->
                 when (filter) {
-                    is RegexQueryFilter -> {
-                        useRegex = filter.state
-                    }
-
                     is SortFilter -> {
                         sortByPopularity = filter.state == 1
                     }
@@ -110,9 +103,8 @@ class Hitomi(
                 }
             }
             if (page == 1) {
-                lastIndex = 0
                 searchResponse = hitomiSearch(
-                    if (useRegex) "" else query.trim(),
+                    query.trim(),
                     sortByPopularity,
                     whitelistMode,
                     blacklistMode,
@@ -120,20 +112,6 @@ class Hitomi(
                 ).toList()
             }
 
-            /* incomplete regex search mechanism
-            var entries = listOf<SManga>()
-            var start = max((page - 1) * 25, lastIndex)
-            var end = min(lastIndex + page * 25, searchResponse.size)
-
-            while (entries.isEmpty() && start <= end) {
-            entries = searchResponse.subList(start, end)
-            .toMangaList(if (useRegex) query.trim() else "")
-            lastIndex = (start + 26).also { start = it }
-            end = min(lastIndex + page * 25, searchResponse.size)
-            }
-
-            MangasPage(entries, lastIndex < searchResponse.size)
-             */
             val end = min(page * 25, searchResponse.size)
             val entries = searchResponse.subList((page - 1) * 25, end)
                 .toMangaList()
@@ -145,7 +123,6 @@ class Hitomi(
     private class SortFilter : Filter.Select<String>("Sort By", arrayOf("Updated", "Popularity"))
     private class WhitelistFilter : Filter.Select<String>("Whitelist Mode", arrayOf("AND", "OR"), 0)
     private class BlacklistFilter : Filter.Select<String>("Blacklist Mode", arrayOf("AND", "OR"), 1)
-    private class RegexQueryFilter : Filter.CheckBox("Regex Query")
 
     override fun getFilterList(): FilterList {
         return FilterList(WhitelistFilter(), BlacklistFilter(), SortFilter())
@@ -216,46 +193,36 @@ class Hitomi(
                 positiveTerms.isEmpty() -> getGalleryIDsFromNozomi(null, "index", language)
                 else -> emptySet()
             }.toMutableSet()
-            val blacklists = mutableSetOf<Int>()
             val whitelists = mutableSetOf<Int>()
+            val blacklists = mutableSetOf<Int>()
 
-            fun filterPositive(newResults: Set<Int>) {
-                when {
-                    whitelists.isEmpty() -> whitelists.addAll(newResults)
-                    else -> if (whitelistMode == "AND") {
-                        whitelists.retainAll(newResults)
-                    } else {
-                        whitelists.addAll(newResults)
-                    }
-                }
-            }
-
-            fun filterNegative(newResults: Set<Int>) {
-                when {
-                    blacklists.isEmpty() -> blacklists.addAll(newResults)
-                    else -> if (blacklistMode == "AND") {
-                        blacklists.retainAll(newResults)
-                    } else {
-                        blacklists.addAll(newResults)
+            fun filterResults(mode: String, results: MutableSet<Int>, reference: Set<Int>) {
+                if (results.isEmpty()) {
+                    results.addAll(reference)
+                } else {
+                    when (mode) {
+                        "AND" -> results.retainAll(reference)
+                        "OR" -> results.addAll(reference)
                     }
                 }
             }
 
             // positive results
             positiveResults.forEach {
-                filterPositive(it.await())
-            }.run {
-                if (results.isEmpty()) {
-                    results.addAll(whitelists.sortedDescending())
-                } else {
-                    results.retainAll(whitelists)
-                }
+                filterResults(whitelistMode, whitelists, it.await())
             }
 
             // negative results
             negativeResults.forEach {
-                filterNegative(it.await())
-            }.run { results.removeAll(blacklists) }
+                filterResults(blacklistMode, blacklists, it.await())
+            }
+
+            if (results.isEmpty()) {
+                results.addAll(whitelists.sortedDescending())
+            } else {
+                results.retainAll(whitelists)
+            }
+            results.removeAll(blacklists)
 
             results
         }
@@ -492,53 +459,11 @@ class Hitomi(
                         client.newCall(GET("$ltnUrl/galleries/$id.js", headers))
                             .awaitSuccess()
                             .parseScriptAs<Gallery>()
-                            // .filterByRegex(query)
                             .toSManga()
                     }.getOrNull()
                 }
             }.awaitAll().filterNotNull()
         }
-
-    private fun Gallery.filterByRegex(query: String): Gallery {
-        val terms = query
-            .trim()
-            .replace(Regex("""^\?"""), "")
-            .split(Regex("\\s+"))
-            .map {
-                it.replace('_', ' ')
-            }
-        if (terms.firstOrNull().isNullOrEmpty()) return this
-
-        val positiveTerms = LinkedList<Regex>()
-        val negativeTerms = LinkedList<Regex>()
-
-        for (term in terms) {
-            if (term.startsWith("-")) {
-                negativeTerms.push(Regex(term.removePrefix("-"), RegexOption.IGNORE_CASE))
-            } else if (term.isNotBlank()) {
-                positiveTerms.push(Regex(term, RegexOption.IGNORE_CASE))
-            }
-        }
-
-        /**@return return true if all of 'pattern' is matching any of 'tags'*/
-        fun matchAll(pattern: Iterable<Regex>, tags: Iterable<String>): Boolean {
-            return pattern.all { p -> tags.any { p.matches(it) } }
-        }
-
-        /**@return return true if any of 'pattern' is matching any of 'tags'*/
-        fun matchAny(pattern: Iterable<Regex>, tags: Iterable<String>): Boolean {
-            return pattern.any { p -> tags.any { p.matches(it) } }
-        }
-
-        if (!matchAll(positiveTerms, this.galleryinfo)) {
-            throw Exception("whitelist tags requirement is not met")
-        }
-
-        if (matchAny(negativeTerms, this.galleryinfo)) {
-            throw Exception("blacklist tags requirement is met")
-        }
-        return this
-    }
 
     private suspend fun Gallery.toSManga() = SManga.create().apply {
         title = this@toSManga.title
@@ -567,7 +492,7 @@ class Hitomi(
             "https://${subDomain}tn.$domain/webpbigtn/${thumbPathFromHash(hash)}/$hash.webp"
         }
         description = buildString {
-            append("Gallery ID: $id", "\n")
+            append("Gallery ID: ${id.content}", "\n")
             if (!japanese_title.isNullOrBlank()) append("Japanese Title: $japanese_title", "\n")
         }
         status = SManga.COMPLETED

@@ -10,7 +10,7 @@ data class Gallery(
     val language: String,
     val date: String,
     val type: String,
-    val id: String,
+    val id: JsonPrimitive,
     val japanese_title: String?,
     val tags: List<Tag>?,
     val artists: List<Artist>?,
