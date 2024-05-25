@@ -7,6 +7,7 @@ import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.extension.en.anchira.AnchiraHelper.createChapter
+import eu.kanade.tachiyomi.extension.en.anchira.AnchiraHelper.getCdn
 import eu.kanade.tachiyomi.extension.en.anchira.AnchiraHelper.getPathFromUrl
 import eu.kanade.tachiyomi.extension.en.anchira.AnchiraHelper.prepareTags
 import eu.kanade.tachiyomi.network.GET
@@ -43,7 +44,7 @@ class Anchira : HttpSource(), ConfigurableSource {
 
     override val baseUrl = "https://anchira.to"
 
-    private val apiUrl = "$baseUrl/api/v1"
+    private val apiUrl = baseUrl.replace("://", "://api.")
 
     private val libraryUrl = "$apiUrl/library"
 
@@ -55,7 +56,7 @@ class Anchira : HttpSource(), ConfigurableSource {
 
     override val client: OkHttpClient = network.cloudflareClient.newBuilder()
         .rateLimit(3, 1, TimeUnit.SECONDS)
-        .addInterceptor { apiInterceptor(it) }
+        .addInterceptor { resampledInterceptor(it) }
         .build()
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -64,7 +65,9 @@ class Anchira : HttpSource(), ConfigurableSource {
         Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
     }
 
-    override fun headersBuilder() = super.headersBuilder().add("X-Requested-With", "XMLHttpRequest")
+    override fun headersBuilder() = super.headersBuilder()
+        .add("Referer", "$baseUrl/")
+        .add("Origin", baseUrl)
 
     // Latest
 
@@ -81,7 +84,7 @@ class Anchira : HttpSource(), ConfigurableSource {
                 SManga.create().apply {
                     url = "/g/${it.id}/${it.key}"
                     title = it.title
-                    thumbnail_url = "$cdnUrl/${it.id}/${it.key}/m/${it.thumbnailIndex + 1}"
+                    thumbnail_url = "$cdnUrl/${it.id}/${it.key}/m/${it.cover?.name}"
                     val art = it.tags.filter { it.namespace == 1 }.joinToString(", ") { it.name }
                         .ifEmpty { null }
                     artist = art
@@ -242,7 +245,7 @@ class Anchira : HttpSource(), ConfigurableSource {
                 url = "/g/${data.id}/${data.key}"
                 title = data.title
                 thumbnail_url =
-                    "$cdnUrl/${data.id}/${data.key}/b/${data.thumbnailIndex + 1}"
+                    "$cdnUrl/${data.id}/${data.key}/l/${data.images[data.thumbnailIndex].name}"
                 val art = data.tags.filter { it.namespace == 1 }.joinToString(", ") { it.name }
                     .ifEmpty { null }
                 artist = art
@@ -316,10 +319,10 @@ class Anchira : HttpSource(), ConfigurableSource {
         val data = json.decodeFromString<Entry>(response.body.string())
         val imageData = getImageData(data)
 
-        return imageData.names.mapIndexed { i, name ->
+        return data.images.mapIndexed { i, image ->
             Page(
                 i,
-                imageUrl = "$cdnUrl/${imageData.id}/${imageData.key}/${imageData.hash}/b/$name",
+                imageUrl = "${getCdn(i)}/${imageData.id}/${imageData.key}/${imageData.hash}/b/${image.name}",
             )
         }
     }
@@ -328,7 +331,7 @@ class Anchira : HttpSource(), ConfigurableSource {
         val keys = anchiraData.find { it.id == entry.id }
 
         if (keys?.key != null && keys.hash != null) {
-            return ImageData(keys.id, keys.key, keys.hash, keys.names)
+            return ImageData(keys.id, keys.key, keys.hash)
         }
 
         try {
@@ -429,28 +432,20 @@ class Anchira : HttpSource(), ConfigurableSource {
     private val SharedPreferences.useTagGrouping
         get() = getBoolean(USE_TAG_GROUPING, false)
 
-    private fun apiInterceptor(chain: Interceptor.Chain): Response {
+    private fun resampledInterceptor(chain: Interceptor.Chain): Response {
         val request = chain.request()
-        val requestUrl = request.url.toString()
+        val url = request.url.toString()
 
-        return if (requestUrl.contains("/api/v1")) {
-            val newRequestBuilder = request.newBuilder()
+        return if (url.contains("sexo.xyz")) {
+            val response = chain.proceed(request)
 
-            if (requestUrl.contains(Regex("/\\d+/\\S+"))) {
-                newRequestBuilder.header(
-                    "Referer",
-                    requestUrl.replace(libraryUrl, "$baseUrl/g"),
-                )
-            } else if (requestUrl.contains("user/favorites")) {
-                newRequestBuilder.header(
-                    "Referer",
-                    requestUrl.replace("$apiUrl/user/favorites", "$baseUrl/favorites"),
-                )
-            } else {
-                newRequestBuilder.header("Referer", requestUrl.replace(libraryUrl, baseUrl))
+            if (response.isSuccessful) {
+                return response
+            } else if (url.contains("/b/")) {
+                return chain.proceed(request.newBuilder().url(url.replace("/b/", "/a/")).build())
             }
 
-            chain.proceed(newRequestBuilder.build())
+            throw IOException("An error occurred while loading the image - ${response.code}")
         } else {
             chain.proceed(request)
         }
@@ -474,7 +469,7 @@ class Anchira : HttpSource(), ConfigurableSource {
         private const val OPEN_SOURCE_PREF = "use_manga_source"
         private const val USE_TAG_GROUPING = "use_tag_grouping"
         private const val DATA_JSON =
-            "https://gist.githubusercontent.com/LetrixZ/2b559cc5829d1c221c701e02ecd81411/raw/data-v5.json"
+            "https://raw.githubusercontent.com/LetrixZ/gallery-data/main/extension_data.min.json"
     }
 }
 

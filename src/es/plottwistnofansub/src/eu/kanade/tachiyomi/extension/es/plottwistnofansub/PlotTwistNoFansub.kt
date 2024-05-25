@@ -138,19 +138,26 @@ class PlotTwistNoFansub : ParsedHttpSource(), ConfigurableSource {
 
     override fun chapterListParse(response: Response): List<SChapter> {
         val document = response.asJsoup()
-        val mangaId = document.selectFirst(".chapters-container .row.itemlist p[data-mangaid]")!!.attr("data-mangaid")
+
+        val mangaIds = listOfNotNull(
+            MANGAID1_REGEX.find(document.html())?.groupValues?.get(1),
+            document.selectFirst("link[rel=shortlink]")?.attr("href")?.substringAfterLast("="),
+            document.selectFirst("body")?.classNames()?.filter { it.startsWith("postid-") }?.getOrNull(0)?.substringAfterLast("-"),
+            document.selectFirst(".td-post-views span")?.classNames()?.filter { it.startsWith("td-nr-views-") }?.getOrNull(0)?.substringAfterLast("-"),
+        ) + document.select("*[data-mangaid]").map { it.attr("data-mangaid") }
+
+        val mangaId = mangaIds.groupingBy { it }.eachCount().maxBy { it.value }.key
 
         val key = getKey(document)
         val url = "$baseUrl/wp-admin/admin-ajax.php"
-        val formBody = FormBody.Builder()
-            .add("action", key)
-            .add("manga_id", mangaId)
 
         var page = 1
         val chapterList = mutableListOf<SChapter>()
 
         do {
-            val body = formBody
+            val body = FormBody.Builder()
+                .add("action", key)
+                .add("manga_id", mangaId)
                 .add("pageNumber", page.toString())
                 .build()
 
@@ -181,9 +188,10 @@ class PlotTwistNoFansub : ParsedHttpSource(), ConfigurableSource {
     override fun chapterFromElement(element: Element): SChapter = throw UnsupportedOperationException()
 
     override fun pageListParse(document: Document): List<Page> {
-        val script = document.selectFirst("script#clarity-reader-nav-js-extra")!!.data()
-        val pagesJson = CHAPTER_PAGES_REGEX.find(script)!!.groupValues[1]
-        val result = json.decodeFromString<PagesPayloadDto>(pagesJson)
+        val script = document.select("script")
+            .map(Element::data)
+            .firstNotNullOf(CHAPTER_PAGES_REGEX::find)
+        val result = json.decodeFromString<PagesPayloadDto>(script.groups["json"]!!.value)
         val mangaSlug = "${result.cdnUrl}/${result.mangaSlug}"
         val chapterNumber = result.chapterNumber
         return result.images.mapIndexed { i, img ->
@@ -217,21 +225,17 @@ class PlotTwistNoFansub : ParsedHttpSource(), ConfigurableSource {
     private fun getKey(document: Document): String {
         val customPriorityWant = listOf("custom")
         val customPriorityJunk = listOf("bootstrap", "pagi", "reader", "jquery")
+        val customPriorityJunk2 = listOf("multilanguage-", "ad-", "td-", "bj-", "html-", "gd-")
 
         document.select("script[src*=\"wp-content/plugins/\"]")
             .asSequence()
             .map { it.attr("src") }
-            .filterNot { it.contains("wp-content/plugins/multilanguage-") }
-            .filterNot { it.contains("wp-content/plugins/ad-") }
-            .filterNot { it.contains("wp-content/plugins/td-") }
-            .filterNot { it.contains("wp-content/plugins/bj-") }
-            .filterNot { it.contains("wp-content/plugins/html-") }
-            .filterNot { it.contains("wp-content/plugins/gd-") }
             .sortedWith(
                 compareBy<String> { url ->
                     when {
                         customPriorityWant.any { url.contains(it) } -> 0
                         customPriorityJunk.any { url.contains(it) } -> 2
+                        customPriorityJunk2.any { url.contains(it) } -> 3
                         else -> 1
                     }
                 },
@@ -254,8 +258,9 @@ class PlotTwistNoFansub : ParsedHttpSource(), ConfigurableSource {
     }
 
     companion object {
+        private val MANGAID1_REGEX = ""","manid":"(\d+)",""".toRegex()
         private val UNESCAPE_REGEX = """\\(.)""".toRegex()
-        private val CHAPTER_PAGES_REGEX = """obj\s*=\s*(.*)\s*;""".toRegex()
+        private val CHAPTER_PAGES_REGEX = """obj\s*=\s*(?<json>.*)\s*;""".toRegex()
         private val ACTION_REGEX = """action:\s*?(['"])([^\r\n]+?)\1""".toRegex()
         private const val MAX_MANGA_RESULTS = 1000
     }
