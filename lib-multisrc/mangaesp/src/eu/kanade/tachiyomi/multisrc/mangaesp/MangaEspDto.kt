@@ -44,13 +44,15 @@ class SeriesDto(
     val trending: TrendingDto? = null,
     @SerialName("autors") private val authors: List<AuthorDto> = emptyList(),
     private val artists: List<ArtistDto> = emptyList(),
-
+    @Suppress("unused") // Used in some sources
+    @SerialName("idioma")
+    val language: String? = null,
 ) {
-    fun toSManga(): SManga {
+    fun toSManga(seriesPath: String): SManga {
         return SManga.create().apply {
             title = name
             thumbnail_url = thumbnail
-            url = "/ver/$slug"
+            url = "$seriesPath/$slug"
         }
     }
 
@@ -102,7 +104,7 @@ class ChapterDto(
     private val slug: String,
     @SerialName("created_at") private val date: String,
 ) {
-    fun toSChapter(seriesSlug: String): SChapter {
+    fun toSChapter(seriesPath: String, seriesSlug: String): SChapter {
         return SChapter.create().apply {
             name = "Capítulo ${number.toString().removeSuffix(".0")}"
             if (!this@ChapterDto.name.isNullOrBlank()) {
@@ -113,7 +115,7 @@ class ChapterDto(
             } catch (e: Exception) {
                 0L
             }
-            url = "/ver/$seriesSlug/$slug"
+            url = "$seriesPath/$seriesSlug/$slug"
         }
     }
 

@@ -3,7 +3,8 @@ ext {
     extClass = '.KewnScans'
     themePkg = 'keyoapp'
     baseUrl = 'https://kewnscans.org'
-    overrideVersionCode = 0
+    overrideVersionCode = 1
+    isNsfw = false
 }
 
 apply from: "$rootDir/common.gradle"

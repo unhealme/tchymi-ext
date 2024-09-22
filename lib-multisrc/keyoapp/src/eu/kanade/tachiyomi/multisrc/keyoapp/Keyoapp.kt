@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi.multisrc.keyoapp
 
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
@@ -31,9 +30,7 @@ abstract class Keyoapp(
 ) : ParsedHttpSource() {
     override val supportsLatest = true
 
-    override val client = network.cloudflareClient.newBuilder()
-        .rateLimit(2)
-        .build()
+    override val client = network.cloudflareClient
 
     override fun headersBuilder() = super.headersBuilder()
         .add("Referer", "$baseUrl/")
@@ -197,7 +194,18 @@ abstract class Keyoapp(
         status = document.selectFirst("div[alt=Status]").parseStatus()
         author = document.selectFirst("div[alt=Author]")?.text()
         artist = document.selectFirst("div[alt=Artist]")?.text()
-        genre = document.select("div.grid:has(>h1) > div > a").joinToString { it.text() }
+        genre = buildList {
+            document.selectFirst("div[alt='Series Type']")?.text()?.replaceFirstChar {
+                if (it.isLowerCase()) {
+                    it.titlecase(
+                        Locale.getDefault(),
+                    )
+                } else {
+                    it.toString()
+                }
+            }.let(::add)
+            document.select("div.grid:has(>h1) > div > a").forEach { add(it.text()) }
+        }.joinToString()
     }
 
     private fun Element?.parseStatus(): Int = when (this?.text()?.lowercase()) {
@@ -223,42 +231,50 @@ abstract class Keyoapp(
     // Image list
 
     override fun pageListParse(document: Document): List<Page> {
-        return document.select("#pages > img").map {
-            val index = it.attr("count").toInt()
-            Page(index, document.location(), it.imgAttr("150"))
-        }
+        document.select("#pages > img")
+            .map { it.attr("uid") }
+            .filter { it.isNotEmpty() }
+            .mapIndexed { index, img ->
+                Page(index, document.location(), "$cdnUrl/uploads/$img")
+            }
+            .takeIf { it.isNotEmpty() }
+            ?.also { return it }
+
+        // Fallback, old method
+        return document.select("#pages > img")
+            .map { it.imgAttr() }
+            .filter { it.contains(oldImgCdnRegex) }
+            .mapIndexed { index, img ->
+                Page(index, document.location(), img)
+            }
     }
+
+    protected val cdnUrl = "https://cdn.igniscans.com"
+
+    private val oldImgCdnRegex = Regex("""^(https?:)?//cdn\d*\.keyoapp\.com""")
 
     override fun imageUrlParse(document: Document) = ""
 
     // Utilities
 
     // From mangathemesia
-    private fun Element.imgAttr(width: String): String {
+    private fun Element.imgAttr(): String {
         val url = when {
             hasAttr("data-lazy-src") -> attr("abs:data-lazy-src")
             hasAttr("data-src") -> attr("abs:data-src")
             else -> attr("abs:src")
         }
-        return url.toHttpUrl()
-            .newBuilder()
-            .addQueryParameter("w", width)
-            .build()
-            .toString()
+        return url
     }
 
-    private fun Element.getImageUrl(selector: String): String? {
-        return this.selectFirst(selector)?.let {
-            it.attr("style")
+    protected open fun Element.getImageUrl(selector: String): String? {
+        return this.selectFirst(selector)?.let { element ->
+            element.attr("style")
                 .substringAfter(":url(", "")
                 .substringBefore(")", "")
                 .takeIf { it.isNotEmpty() }
-                ?.toHttpUrlOrNull()?.let {
-                    it.newBuilder()
-                        .setQueryParameter("w", "480")
-                        .build()
-                        .toString()
-                }
+                ?.toHttpUrlOrNull()?.newBuilder()?.setQueryParameter("w", "480")?.build()
+                ?.toString()
         }
     }
 

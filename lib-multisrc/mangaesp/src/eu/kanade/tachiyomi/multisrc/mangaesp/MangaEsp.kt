@@ -42,6 +42,10 @@ abstract class MangaEsp(
         classLoader = this::class.java.classLoader!!,
     )
 
+    protected open val apiPath = "/api"
+
+    protected open val seriesPath = "/ver"
+
     override val client: OkHttpClient = network.client.newBuilder()
         .rateLimitHost(baseUrl.toHttpUrl(), 2)
         .build()
@@ -49,7 +53,7 @@ abstract class MangaEsp(
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("Referer", "$baseUrl/")
 
-    override fun popularMangaRequest(page: Int): Request = GET("$apiBaseUrl/api/topSerie", headers)
+    override fun popularMangaRequest(page: Int): Request = GET("$apiBaseUrl$apiPath/topSerie", headers)
 
     override fun popularMangaParse(response: Response): MangasPage {
         val responseData = json.decodeFromString<TopSeriesDto>(response.body.string())
@@ -58,22 +62,22 @@ abstract class MangaEsp(
         val topWeekly = responseData.response.topWeekly.flatten().map { it.data }
         val topMonthly = responseData.response.topMonthly.flatten().map { it.data }
 
-        val mangas = (topDaily + topWeekly + topMonthly).distinctBy { it.slug }.map { it.toSManga() }
+        val mangas = (topDaily + topWeekly + topMonthly).distinctBy { it.slug }.map { it.toSManga(seriesPath) }
 
         return MangasPage(mangas, false)
     }
 
-    override fun latestUpdatesRequest(page: Int): Request = GET("$apiBaseUrl/api/lastUpdates", headers)
+    override fun latestUpdatesRequest(page: Int): Request = GET("$apiBaseUrl$apiPath/lastUpdates", headers)
 
     override fun latestUpdatesParse(response: Response): MangasPage {
         val responseData = json.decodeFromString<LastUpdatesDto>(response.body.string())
 
-        val mangas = responseData.response.map { it.toSManga() }
+        val mangas = responseData.response.map { it.toSManga(seriesPath) }
 
         return MangasPage(mangas, false)
     }
 
-    private var comicsList = mutableListOf<SeriesDto>()
+    protected var comicsList = mutableListOf<SeriesDto>()
 
     override fun fetchSearchManga(
         page: Int,
@@ -93,7 +97,7 @@ abstract class MangaEsp(
 
     override fun searchMangaParse(response: Response): MangasPage = throw UnsupportedOperationException()
 
-    private fun searchMangaParse(response: Response, page: Int, query: String, filters: FilterList): MangasPage {
+    protected open fun searchMangaParse(response: Response, page: Int, query: String, filters: FilterList): MangasPage {
         val document = response.asJsoup()
         val script = document.select("script:containsData(self.__next_f.push)").joinToString { it.data() }
         val jsonString = MANGA_LIST_REGEX.find(script)?.groupValues?.get(1)
@@ -105,7 +109,7 @@ abstract class MangaEsp(
 
     private var filteredList = mutableListOf<SeriesDto>()
 
-    private fun parseComicsList(page: Int, query: String, filterList: FilterList): MangasPage {
+    protected open fun parseComicsList(page: Int, query: String, filterList: FilterList): MangasPage {
         if (page == 1) {
             filteredList.clear()
 
@@ -151,7 +155,7 @@ abstract class MangaEsp(
 
         return MangasPage(
             filteredList.subList((page - 1) * MANGAS_PER_PAGE, min(page * MANGAS_PER_PAGE, filteredList.size))
-                .map { it.toSManga() },
+                .map { it.toSManga(seriesPath) },
             hasNextPage,
         )
     }
@@ -171,7 +175,7 @@ abstract class MangaEsp(
             ?: throw Exception(intl["comic_data_error"])
         val unescapedJson = mangaDetailsJson.unescape()
         val series = json.decodeFromString<SeriesDto>(unescapedJson)
-        return series.chapters.map { it.toSChapter(series.slug) }
+        return series.chapters.map { it.toSChapter(seriesPath, series.slug) }
     }
 
     override fun pageListParse(response: Response): List<Page> {
@@ -228,21 +232,21 @@ abstract class MangaEsp(
 
     override fun imageUrlParse(response: Response): String = throw UnsupportedOperationException()
 
-    private fun Element.imgAttr(): String = when {
+    protected open fun Element.imgAttr(): String = when {
         hasAttr("data-lazy-src") -> attr("abs:data-lazy-src")
         hasAttr("data-src") -> attr("abs:data-src")
         hasAttr("data-cfsrc") -> attr("abs:data-cfsrc")
         else -> attr("abs:src")
     }
 
-    private fun String.unescape(): String {
+    fun String.unescape(): String {
         return UNESCAPE_REGEX.replace(this, "$1")
     }
 
     companion object {
         private val UNESCAPE_REGEX = """\\(.)""".toRegex()
-        private val MANGA_LIST_REGEX = """self\.__next_f\.push\(.*data\\":(\[.*trending.*])\}""".toRegex()
+        val MANGA_LIST_REGEX = """self\.__next_f\.push\(.*data\\":(\[.*trending.*])\}""".toRegex()
         private val MANGA_DETAILS_REGEX = """self\.__next_f\.push\(.*data\\":(\{.*lastChapters.*\}).*\\"numFollow""".toRegex()
-        private const val MANGAS_PER_PAGE = 15
+        const val MANGAS_PER_PAGE = 15
     }
 }

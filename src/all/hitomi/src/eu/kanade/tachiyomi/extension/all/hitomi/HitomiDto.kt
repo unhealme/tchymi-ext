@@ -4,82 +4,68 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonPrimitive
 
 @Serializable
-data class Gallery(
+class Gallery(
     val galleryurl: String,
     val title: String,
-    val language: String,
+    val japaneseTitle: String?,
     val date: String,
-    val type: String,
-    val id: String,
-    val japanese_title: String?,
+    val type: String?,
+    val language: String?,
     val tags: List<Tag>?,
     val artists: List<Artist>?,
     val groups: List<Group>?,
     val characters: List<Character>?,
     val parodys: List<Parody>?,
     val files: List<ImageFile>,
-) {
-    val galleryinfo: List<String>
-        get() = (
-            listOf(
-                title,
-                "url:$galleryurl",
-                "type:$type",
-                "id:$id",
-            ) +
-                (tags?.map { it.formatted } ?: emptyList()) +
-                (artists?.map { "artist:${it.artist}" } ?: emptyList()) +
-                (groups?.map { "group:${it.group}" } ?: emptyList()) +
-                (characters?.map { "character:${it.character}" } ?: emptyList()) +
-                (parodys?.map { "series:${it.parody}" } ?: emptyList())
-            )
-}
-
-@Serializable
-data class ImageFile(
-    val hash: String,
 )
 
 @Serializable
-data class Tag(
-    val female: JsonPrimitive?,
-    val male: JsonPrimitive?,
-    val tag: String,
+class ImageFile(
+    val hash: String,
+    val haswebp: Int,
+    val hasavif: Int,
+    val hasjxl: Int,
+)
+
+@Serializable
+class Tag(
+    private val female: JsonPrimitive?,
+    private val male: JsonPrimitive?,
+    private val tag: String,
 ) {
-    val formatted
-        get() = if (female?.content == "1") {
-            "Female:${tag.toCamelCase()}"
-        } else if (male?.content == "1") {
-            "Male:${tag.toCamelCase()}"
-        } else {
-            "Tag:${tag.toCamelCase()}"
-        }
+    val formatted get() = if (female?.content == "1") {
+        tag.toCamelCase() + " ♀"
+    } else if (male?.content == "1") {
+        tag.toCamelCase() + " ♂"
+    } else {
+        tag.toCamelCase()
+    }
 }
 
 @Serializable
-data class Artist(
-    val artist: String,
+class Artist(
+    private val artist: String,
 ) {
     val formatted get() = artist.toCamelCase()
 }
 
 @Serializable
-data class Group(
-    val group: String,
+class Group(
+    private val group: String,
 ) {
     val formatted get() = group.toCamelCase()
 }
 
 @Serializable
-data class Character(
-    val character: String,
+class Character(
+    private val character: String,
 ) {
     val formatted get() = character.toCamelCase()
 }
 
 @Serializable
-data class Parody(
-    val parody: String,
+class Parody(
+    private val parody: String,
 ) {
     val formatted get() = parody.toCamelCase()
 }

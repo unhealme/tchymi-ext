@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.lib.i18n.Intl
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.source.ConfigurableSource
+import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
@@ -29,6 +30,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.text.SimpleDateFormat
 import java.util.Locale
+import kotlin.concurrent.thread
 
 abstract class HeanCms(
     override val name: String,
@@ -44,6 +46,8 @@ abstract class HeanCms(
     override val supportsLatest = true
 
     override val client: OkHttpClient = network.cloudflareClient
+
+    protected open val useNewQueryEndpoint = false
 
     protected open val useNewChapterEndpoint = false
 
@@ -68,11 +72,13 @@ abstract class HeanCms(
 
     protected open val coverPath: String = ""
 
+    protected open val cdnUrl = apiUrl
+
     protected open val mangaSubDirectory: String = "series"
 
     protected open val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZZZZZ", Locale.US)
 
-    override fun headersBuilder(): Headers.Builder = Headers.Builder()
+    override fun headersBuilder() = super.headersBuilder()
         .add("Origin", baseUrl)
         .add("Referer", "$baseUrl/")
 
@@ -117,7 +123,7 @@ abstract class HeanCms(
     override fun popularMangaRequest(page: Int): Request {
         val url = "$apiUrl/query".toHttpUrl().newBuilder()
             .addQueryParameter("query_string", "")
-            .addQueryParameter("series_status", "All")
+            .addQueryParameter(if (useNewQueryEndpoint) "status" else "series_status", "All")
             .addQueryParameter("order", "desc")
             .addQueryParameter("orderBy", "total_views")
             .addQueryParameter("series_type", "Comic")
@@ -134,7 +140,7 @@ abstract class HeanCms(
     override fun latestUpdatesRequest(page: Int): Request {
         val url = "$apiUrl/query".toHttpUrl().newBuilder()
             .addQueryParameter("query_string", "")
-            .addQueryParameter("series_status", "All")
+            .addQueryParameter(if (useNewQueryEndpoint) "status" else "series_status", "All")
             .addQueryParameter("order", "desc")
             .addQueryParameter("orderBy", "latest")
             .addQueryParameter("series_type", "Comic")
@@ -185,7 +191,7 @@ abstract class HeanCms(
 
         val url = "$apiUrl/query".toHttpUrl().newBuilder()
             .addQueryParameter("query_string", query)
-            .addQueryParameter("series_status", statusFilter?.selected?.value ?: "All")
+            .addQueryParameter(if (useNewQueryEndpoint) "status" else "series_status", statusFilter?.selected?.value ?: "All")
             .addQueryParameter("order", if (sortByFilter?.state?.ascending == true) "asc" else "desc")
             .addQueryParameter("orderBy", sortByFilter?.selected ?: "total_views")
             .addQueryParameter("series_type", "Comic")
@@ -202,7 +208,7 @@ abstract class HeanCms(
 
         val result = json.parseAs<HeanCmsQuerySearchDto>()
         val mangaList = result.data.map {
-            it.toSManga(apiUrl, coverPath, mangaSubDirectory)
+            it.toSManga(cdnUrl, coverPath, mangaSubDirectory)
         }
 
         return MangasPage(mangaList, result.meta?.hasNextPage() ?: false)
@@ -221,13 +227,13 @@ abstract class HeanCms(
             throw Exception(intl.format("url_changed_error", name, name))
         }
 
-        val seriesId = manga.url.substringAfterLast("#")
+        val seriesSlug = manga.url.substringAfterLast("/").substringBefore("#")
 
         val apiHeaders = headersBuilder()
             .add("Accept", ACCEPT_JSON)
             .build()
 
-        return GET("$apiUrl/series/id/$seriesId", apiHeaders)
+        return GET("$apiUrl/series/$seriesSlug", apiHeaders)
     }
 
     override fun mangaDetailsParse(response: Response): SManga {
@@ -238,7 +244,7 @@ abstract class HeanCms(
         val seriesResult = result.getOrNull()
             ?: throw Exception(intl.format("url_changed_error", name, name))
 
-        val seriesDetails = seriesResult.toSManga(apiUrl, coverPath, mangaSubDirectory)
+        val seriesDetails = seriesResult.toSManga(cdnUrl, coverPath, mangaSubDirectory)
 
         return seriesDetails.apply {
             status = status.takeUnless { it == SManga.UNKNOWN }
@@ -341,8 +347,8 @@ abstract class HeanCms(
         }
     }
 
-    private fun String.toAbsoluteUrl(): String {
-        return if (startsWith("https://") || startsWith("http://")) this else "$apiUrl/$this"
+    protected open fun String.toAbsoluteUrl(): String {
+        return if (startsWith("https://") || startsWith("http://")) this else "$cdnUrl/$coverPath$this"
     }
 
     override fun fetchImageUrl(page: Page): Observable<String> = Observable.just(page.imageUrl!!)
@@ -362,6 +368,8 @@ abstract class HeanCms(
         Status(intl["status_ongoing"], "Ongoing"),
         Status(intl["status_onhiatus"], "Hiatus"),
         Status(intl["status_dropped"], "Dropped"),
+        Status(intl["status_completed"], "Completed"),
+        Status(intl["status_canceled"], "Canceled"),
     )
 
     protected open fun getSortProperties(): List<SortProperty> = listOf(
@@ -371,16 +379,46 @@ abstract class HeanCms(
         SortProperty(intl["sort_by_created_at"], "created_at"),
     )
 
-    protected open fun getGenreList(): List<Genre> = emptyList()
+    private var genresList: List<Genre> = emptyList()
+    private var fetchFiltersAttempts = 0
+    private var filtersState = FiltersState.NOT_FETCHED
+
+    private fun fetchFilters() {
+        if (filtersState != FiltersState.NOT_FETCHED || fetchFiltersAttempts >= 3) return
+        filtersState = FiltersState.FETCHING
+        fetchFiltersAttempts++
+        thread {
+            try {
+                val response = client.newCall(GET("$apiUrl/tags", headers)).execute()
+                val genres = json.decodeFromString<List<HeanCmsGenreDto>>(response.body.string())
+
+                genresList = genres.map { Genre(it.name, it.id) }
+
+                filtersState = FiltersState.FETCHED
+            } catch (e: Throwable) {
+                filtersState = FiltersState.NOT_FETCHED
+            }
+        }
+    }
 
     override fun getFilterList(): FilterList {
-        val genres = getGenreList()
+        fetchFilters()
 
-        val filters = listOfNotNull(
+        val filters = mutableListOf<Filter<*>>(
             StatusFilter(intl["status_filter_title"], getStatusList()),
             SortByFilter(intl["sort_by_filter_title"], getSortProperties()),
-            GenreFilter(intl["genre_filter_title"], genres).takeIf { genres.isNotEmpty() },
         )
+
+        if (filtersState == FiltersState.FETCHED) {
+            filters += listOfNotNull(
+                GenreFilter(intl["genre_filter_title"], genresList),
+            )
+        } else {
+            filters += listOf(
+                Filter.Separator(),
+                Filter.Header(intl["genre_missing_warning"]),
+            )
+        }
 
         return FilterList(filters)
     }
@@ -447,6 +485,8 @@ abstract class HeanCms(
         set(data) {
             edit().putString(TOKEN_PREF, json.encodeToString(data)).apply()
         }
+
+    private enum class FiltersState { NOT_FETCHED, FETCHING, FETCHED }
 
     companion object {
         private const val ACCEPT_IMAGE = "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"

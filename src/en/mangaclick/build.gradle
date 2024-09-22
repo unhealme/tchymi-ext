@@ -1,0 +1,10 @@
+ext {
+    extName = 'MangaGeek'
+    extClass = '.MangaGeek'
+    themePkg = 'madara'
+    baseUrl = 'https://mangageek.org'
+    overrideVersionCode = 3
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

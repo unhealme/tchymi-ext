@@ -1,9 +1,10 @@
 ext {
-    extName = 'Luminous Scans'
-    extClass = '.LuminousScans'
+    extName = 'Radiant Scans'
+    extClass = '.RadiantScans'
     themePkg = 'mangathemesia'
-    baseUrl = 'https://lumitoon.com'
-    overrideVersionCode = 5
+    baseUrl = 'https://radiantscans.com'
+    overrideVersionCode = 9
+    isNsfw = false
 }
 
 apply from: "$rootDir/common.gradle"
