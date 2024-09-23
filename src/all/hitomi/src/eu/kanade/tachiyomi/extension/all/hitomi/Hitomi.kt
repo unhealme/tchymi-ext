@@ -68,6 +68,7 @@ class Hitomi(
     private val preferences: SharedPreferences by lazy {
         Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
     }
+
     private fun imageType() = preferences.getString(PREF_IMAGETYPE, "webp")!!
 
     override fun headersBuilder() = super.headersBuilder()
@@ -76,8 +77,9 @@ class Hitomi(
 
     override fun fetchPopularManga(page: Int): Observable<MangasPage> = Observable.fromCallable {
         runBlocking {
-            val entries = getGalleryIDsFromNozomi("popular", "year", nozomiLang, page.nextPageRange())
-                .toMangaList()
+            val entries =
+                getGalleryIDsFromNozomi("popular", "year", nozomiLang, page.nextPageRange())
+                    .toMangaList()
 
             MangasPage(entries, entries.size >= 24)
         }
@@ -94,7 +96,11 @@ class Hitomi(
 
     private lateinit var searchResponse: List<Int>
 
-    override fun fetchSearchManga(page: Int, query: String, filters: FilterList): Observable<MangasPage> = Observable.fromCallable {
+    override fun fetchSearchManga(
+        page: Int,
+        query: String,
+        filters: FilterList,
+    ): Observable<MangasPage> = Observable.fromCallable {
         runBlocking {
             if (page == 1) {
                 searchResponse = hitomiSearch(
@@ -141,6 +147,8 @@ class Hitomi(
         coroutineScope {
             var sortBy: Pair<String?, String> = Pair(null, "index")
             var random = false
+            var ascending = false
+            var queryMode = QueryMode.AND
 
             val terms = query
                 .trim()
@@ -150,9 +158,10 @@ class Hitomi(
 
             filters.forEach {
                 when (it) {
-                    is SelectFilter -> {
+                    is SortFilter -> {
                         sortBy = Pair(it.getArea(), it.getValue())
-                        random = (it.vals[it.state].first == "Random")
+                        random = (it.vals[it.state!!.index].first == "Random")
+                        ascending = it.state!!.ascending
                     }
 
                     is TypeFilter -> {
@@ -179,11 +188,17 @@ class Hitomi(
                             }
                         }
                     }
+
+                    is QueryModeFilter -> queryMode = it.values[it.state]
                     else -> {}
                 }
             }
 
-            if (language != "all" && sortBy == Pair(null, "index") && !terms.any { it.contains(":") }) {
+            if (language != "all" && sortBy == Pair(
+                    null,
+                    "index",
+                ) && !terms.any { it.contains(":") }
+            ) {
                 terms += "language:$language"
             }
 
@@ -197,6 +212,7 @@ class Hitomi(
                     positiveTerms.push(term)
                 }
             }
+            positiveTerms.sortBy { if (it.contains(':')) 0 else 1 }
 
             val positiveResults = positiveTerms.map {
                 async {
@@ -227,8 +243,12 @@ class Hitomi(
             }
 
             val results = when {
-                positiveTerms.isEmpty() || sortBy != Pair(null, "index")
+                positiveTerms.isEmpty() || queryMode == QueryMode.OR || sortBy != Pair(
+                    null,
+                    "index",
+                )
                 -> getGalleryIDsFromNozomi(sortBy.first, sortBy.second, language)
+
                 else -> emptySet()
             }.toMutableSet()
 
@@ -244,8 +264,12 @@ class Hitomi(
             }
 
             // positive results
-            positiveResults.forEach {
-                filterPositive(it.await())
+            when (queryMode) {
+                QueryMode.AND -> positiveResults.forEach {
+                    filterPositive(it.await())
+                }
+
+                QueryMode.OR -> filterPositive(positiveResults.flatMap { it.await() }.toSet())
             }
 
             // negative results
@@ -255,6 +279,8 @@ class Hitomi(
 
             if (random) {
                 results.toList().shuffled()
+            } else if (ascending) {
+                results.toList().reversed()
             } else {
                 results.toList()
             }
@@ -506,9 +532,19 @@ class Hitomi(
     private suspend fun Gallery.toSManga() = SManga.create().apply {
         title = this@toSManga.title
         url = galleryurl
-        author = groups?.joinToString { it.formatted } ?: artists?.joinToString { it.formatted }
+        author = groups?.joinToString { it.formatted }
         artist = artists?.joinToString { it.formatted }
-        genre = tags?.joinToString { it.formatted }
+        genre = (
+            artists?.map { "Artist:${it.formatted}" }.orEmpty() +
+                groups?.map { "Group:${it.formatted}" }.orEmpty() +
+                type?.let { listOf("Type: ${galleryType[it] ?: it}") }.orEmpty() +
+                language?.let { listOf("Language: ${it.replaceFirstChar { ch -> ch.uppercase() }}") }
+                    .orEmpty() +
+                parodys?.map { "Series:${it.formatted}" }.orEmpty() +
+                characters?.map { "Character:${it.formatted}" }.orEmpty() +
+                tags?.map { tag -> tag.formatted }?.sortedBy { it.lowercase() }
+                    .orEmpty()
+            ).joinToString()
         thumbnail_url = files.first().let {
             val hash = it.hash
             val imageId = imageIdFromHash(hash)
@@ -517,18 +553,8 @@ class Hitomi(
             "https://${subDomain}tn.$domain/webpbigtn/${thumbPathFromHash(hash)}/$hash.webp"
         }
         description = buildString {
-            japaneseTitle?.let {
-                append("Japanese title: ", it, "\n")
-            }
-            parodys?.joinToString { it.formatted }?.let {
-                append("Series: ", it, "\n")
-            }
-            characters?.joinToString { it.formatted }?.let {
-                append("Characters: ", it, "\n")
-            }
-            append("Type: ", type, "\n")
-            append("Pages: ", files.size, "\n")
-            language?.let { append("Language: ", language) }
+            append("Gallery ID: ${id.content}", "\n")
+            if (!japaneseTitle.isNullOrBlank()) append("Japanese Title: $japaneseTitle", "\n")
         }
         status = SManga.COMPLETED
         update_strategy = UpdateStrategy.ONLY_FETCH_ONCE
@@ -558,7 +584,7 @@ class Hitomi(
             SChapter.create().apply {
                 name = "Chapter"
                 url = gallery.galleryurl
-                scanlator = gallery.type
+                scanlator = "${gallery.files.size} Pages"
                 date_upload = try {
                     dateFormat.parse(gallery.date.substringBeforeLast("-"))!!.time
                 } catch (_: ParseException) {
@@ -702,7 +728,9 @@ class Hitomi(
 
     private fun List<Int>.toBytesList(): ByteArray = this.map { it.toByte() }.toByteArray()
     private val signatureOne = listOf(0xFF, 0x0A).toBytesList()
-    private val signatureTwo = listOf(0x00, 0x00, 0x00, 0x0C, 0x4A, 0x58, 0x4C, 0x20, 0x0D, 0x0A, 0x87, 0x0A).toBytesList()
+    private val signatureTwo =
+        listOf(0x00, 0x00, 0x00, 0x0C, 0x4A, 0x58, 0x4C, 0x20, 0x0D, 0x0A, 0x87, 0x0A).toBytesList()
+
     fun ByteArray.startsWith(byteArray: ByteArray): Boolean {
         if (this.size < byteArray.size) return false
         return this.sliceArray(byteArray.indices).contentEquals(byteArray)
@@ -732,7 +760,9 @@ class Hitomi(
     override fun popularMangaRequest(page: Int) = throw UnsupportedOperationException()
     override fun latestUpdatesRequest(page: Int) = throw UnsupportedOperationException()
     override fun latestUpdatesParse(response: Response) = throw UnsupportedOperationException()
-    override fun searchMangaRequest(page: Int, query: String, filters: FilterList) = throw UnsupportedOperationException()
+    override fun searchMangaRequest(page: Int, query: String, filters: FilterList) =
+        throw UnsupportedOperationException()
+
     override fun searchMangaParse(response: Response) = throw UnsupportedOperationException()
     override fun imageUrlParse(response: Response) = throw UnsupportedOperationException()
 

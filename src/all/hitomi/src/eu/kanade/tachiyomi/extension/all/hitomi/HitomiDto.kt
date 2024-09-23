@@ -1,12 +1,15 @@
 package eu.kanade.tachiyomi.extension.all.hitomi
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonPrimitive
 
 @Serializable
 class Gallery(
+    val id: JsonPrimitive,
     val galleryurl: String,
     val title: String,
+    @SerialName("japanese_title")
     val japaneseTitle: String?,
     val date: String,
     val type: String?,
@@ -22,7 +25,7 @@ class Gallery(
 @Serializable
 class ImageFile(
     val hash: String,
-    val haswebp: Int,
+    // val haswebp: Int,
     val hasavif: Int,
     val hasjxl: Int,
 )
@@ -33,13 +36,14 @@ class Tag(
     private val male: JsonPrimitive?,
     private val tag: String,
 ) {
-    val formatted get() = if (female?.content == "1") {
-        tag.toCamelCase() + " ♀"
-    } else if (male?.content == "1") {
-        tag.toCamelCase() + " ♂"
-    } else {
-        tag.toCamelCase()
-    }
+    val formatted
+        get() = if (female?.content == "1") {
+            "Female:${tag.toCamelCase()}"
+        } else if (male?.content == "1") {
+            "Male:${tag.toCamelCase()}"
+        } else {
+            "Tag:${tag.toCamelCase()}"
+        }
 }
 
 @Serializable
