@@ -26,8 +26,8 @@ class Gallery(
 class ImageFile(
     val hash: String,
     // val haswebp: Int,
-    val hasavif: Int,
-    val hasjxl: Int,
+    val hasavif: Int = 0,
+    val hasjxl: Int = 0,
 )
 
 @Serializable
