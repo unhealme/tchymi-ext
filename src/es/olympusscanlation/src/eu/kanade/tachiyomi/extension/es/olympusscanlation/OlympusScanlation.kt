@@ -24,15 +24,15 @@ class OlympusScanlation : HttpSource() {
 
     override val versionId = 2
 
-    override val baseUrl: String = "https://leerolymp.com"
-    private val apiBaseUrl: String = "https://dashboard.leerolymp.com"
+    override val baseUrl: String = "https://olympuscomic.com"
+    private val apiBaseUrl: String = "https://dashboard.olympuscomic.com"
 
     override val lang: String = "es"
     override val name: String = "Olympus Scanlation"
 
     override val supportsLatest: Boolean = true
 
-    override val client = super.client.newBuilder()
+    override val client = network.cloudflareClient.newBuilder()
         .rateLimitHost(baseUrl.toHttpUrl(), 1, 2)
         .rateLimitHost(apiBaseUrl.toHttpUrl(), 2, 1)
         .build()

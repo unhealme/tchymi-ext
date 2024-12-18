@@ -4,11 +4,9 @@ import eu.kanade.tachiyomi.multisrc.keyoapp.Keyoapp
 
 class LuaScans : Keyoapp(
     "Lua Scans",
-    "https://luacomic.net",
+    "https://luacomic.org",
     "en",
 ) {
     // migrated from MangaThemesia to Keyoapp
     override val versionId = 2
-
-    override fun chapterListSelector() = "${super.chapterListSelector()}:not(:has(img[src^='/assets/images/Coin.svg']))"
 }
