@@ -37,12 +37,11 @@ class SeriesDto(
                 metadata.status == "HIATUS" -> SManga.ON_HIATUS
                 else -> SManga.UNKNOWN
             }
-            genre = (
-                collections.filter { it.seriesIds.contains(id) }.map { "collection:${it.name}" } +
-                    (if (lang.isBlank()) emptyList() else listOf("language:$lang")) +
-                    metadata.genres.map { "genre:$it" } +
-                    (metadata.tags + booksMetadata.tags).distinct().map { "tag:$it" }
-                ).joinToString(", ")
+            genre = (collections.filter { it.seriesIds.contains(id) }
+                .map { "Collection:${it.name}" } + (if (lang.isBlank()) emptyList() else listOf(
+                "Language:$lang",
+            )) + metadata.genres.map { "Genre:${it.toCamelCase()}" } + (metadata.tags + booksMetadata.tags).distinct()
+                .map { "Tag:${it.toCamelCase()}" }).joinToString()
             description = metadata.summary.ifBlank { booksMetadata.summary }
             booksMetadata.authors.groupBy({ it.role }, { it.name }).let { map ->
                 author = map["writer"]?.distinct()?.joinToString()
@@ -193,4 +192,20 @@ class ReadListDto(
         thumbnail_url = "$url/thumbnail"
         status = SManga.UNKNOWN
     }
+}
+
+private fun String.toCamelCase(): String {
+    val result = StringBuilder(length)
+    var capitalize = true
+    for (char in this) {
+        result.append(
+            if (capitalize) {
+                char.uppercase()
+            } else {
+                char.lowercase()
+            },
+        )
+        capitalize = char.isWhitespace()
+    }
+    return result.toString()
 }
