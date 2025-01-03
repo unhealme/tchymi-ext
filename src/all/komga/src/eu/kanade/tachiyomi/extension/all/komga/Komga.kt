@@ -17,6 +17,7 @@ import eu.kanade.tachiyomi.extension.all.komga.dto.PageDto
 import eu.kanade.tachiyomi.extension.all.komga.dto.PageWrapperDto
 import eu.kanade.tachiyomi.extension.all.komga.dto.ReadListDto
 import eu.kanade.tachiyomi.extension.all.komga.dto.SeriesDto
+import eu.kanade.tachiyomi.extension.all.komga.dto.toCamelCase
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.source.ConfigurableSource
@@ -30,7 +31,10 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import okhttp3.Credentials
@@ -57,9 +61,8 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
     private val displayName by lazy { preferences.getString(PREF_DISPLAY_NAME, "")!! }
 
     override val name by lazy {
-        val displayNameSuffix = displayName
-            .ifBlank { suffix }
-            .let { if (it.isNotBlank()) " ($it)" else "" }
+        val displayNameSuffix =
+            displayName.ifBlank { suffix }.let { if (it.isNotBlank()) " ($it)" else "" }
 
         "Komga$displayNameSuffix"
     }
@@ -87,43 +90,37 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
 
     private val json: Json by injectLazy()
 
-    override fun headersBuilder() = super.headersBuilder()
-        .set("User-Agent", "TachiyomiKomga/${AppInfo.getVersionName()}")
+    override fun headersBuilder() =
+        super.headersBuilder().set("User-Agent", "TachiyomiKomga/${AppInfo.getVersionName()}")
 
-    override val client: OkHttpClient =
-        network.client.newBuilder()
-            .authenticator { _, response ->
-                if (response.request.header("Authorization") != null) {
-                    null // Give up, we've already failed to authenticate.
-                } else {
-                    response.request.newBuilder()
-                        .addHeader("Authorization", Credentials.basic(username, password))
-                        .build()
-                }
-            }
-            .dns(Dns.SYSTEM) // don't use DNS over HTTPS as it breaks IP addressing
-            .build()
+    override val client: OkHttpClient = network.client.newBuilder().authenticator { _, response ->
+        if (response.request.header("Authorization") != null) {
+            null // Give up, we've already failed to authenticate.
+        } else {
+            response.request.newBuilder()
+                .addHeader("Authorization", Credentials.basic(username, password)).build()
+        }
+    }.dns(Dns.SYSTEM) // don't use DNS over HTTPS as it breaks IP addressing
+        .build()
 
-    override fun popularMangaRequest(page: Int): Request =
-        searchMangaRequest(
-            page,
-            "",
-            FilterList(
-                SeriesSort(Filter.Sort.Selection(1, true)),
-            ),
-        )
+    override fun popularMangaRequest(page: Int): Request = searchMangaRequest(
+        page,
+        "",
+        FilterList(
+            SeriesSort(Filter.Sort.Selection(1, true)),
+        ),
+    )
 
     override fun popularMangaParse(response: Response): MangasPage =
         processSeriesPage(response, baseUrl)
 
-    override fun latestUpdatesRequest(page: Int): Request =
-        searchMangaRequest(
-            page,
-            "",
-            FilterList(
-                SeriesSort(Filter.Sort.Selection(3, false)),
-            ),
-        )
+    override fun latestUpdatesRequest(page: Int): Request = searchMangaRequest(
+        page,
+        "",
+        FilterList(
+            SeriesSort(Filter.Sort.Selection(3, false)),
+        ),
+    )
 
     override fun latestUpdatesParse(response: Response): MangasPage =
         processSeriesPage(response, baseUrl)
@@ -145,7 +142,7 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
         val defaultLibraries = defaultLibraries
 
         if (filterList.filterIsInstance<LibraryFilter>()
-                .isEmpty() && defaultLibraries.isNotEmpty()
+            .isEmpty() && defaultLibraries.isNotEmpty()
         ) {
             url.addQueryParameter("library_id", defaultLibraries.joinToString(","))
         }
@@ -186,7 +183,7 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
             return MangasPage(data.content.map { it.toSManga(baseUrl) }, !data.last)
         } else {
             val data = response.parseAs<PageWrapperDto<SeriesDto>>()
-            return MangasPage(data.content.map { it.toSManga(baseUrl, collections) }, !data.last)
+            return MangasPage(data.content.map { it.toBasicSManga(baseUrl) }, !data.last)
         }
     }
 
@@ -198,7 +195,42 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
         return if (response.isFromReadList()) {
             response.parseAs<ReadListDto>().toSManga(baseUrl)
         } else {
-            response.parseAs<SeriesDto>().toSManga(baseUrl, collections)
+            runBlocking { response.parseAs<SeriesDto>().toSManga() }
+        }
+    }
+
+    private suspend fun SeriesDto.toSManga(): SManga {
+        val lang = langFromCode(metadata.language, metadata.language)
+        val collections = coroutineScope {
+            async {
+                client.newCall(GET("$baseUrl/api/v1/series/$id/collections")).await()
+                    .parseAs<List<CollectionDto>>()
+            }
+        }
+        return SManga.create().apply {
+            title = metadata.title
+            url = "$baseUrl/api/v1/series/$id"
+            thumbnail_url = "$url/thumbnail"
+            status = when {
+                metadata.status == "ENDED" && metadata.totalBookCount != null && booksCount < metadata.totalBookCount -> SManga.PUBLISHING_FINISHED
+                metadata.status == "ENDED" -> SManga.COMPLETED
+                metadata.status == "ONGOING" -> SManga.ONGOING
+                metadata.status == "ABANDONED" -> SManga.CANCELLED
+                metadata.status == "HIATUS" -> SManga.ON_HIATUS
+                else -> SManga.UNKNOWN
+            }
+            genre = (
+                collections.await().map { "Collection:${it.name}" } +
+                    (if (lang.isBlank()) emptyList() else listOf("Language:$lang")) +
+                    metadata.genres.map { "Genre:${it.toCamelCase()}" }.distinct() +
+                    (metadata.tags + booksMetadata.tags).map { "Tag:${it.toCamelCase()}" }
+                        .distinct()
+                ).joinToString()
+            description = metadata.summary.ifBlank { booksMetadata.summary }
+            booksMetadata.authors.groupBy({ it.role }, { it.name }).let { map ->
+                author = map["writer"]?.distinct()?.joinToString()
+                artist = map["penciller"]?.distinct()?.joinToString()
+            }
         }
     }
 
@@ -218,29 +250,26 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
         val isFromReadList = response.isFromReadList()
         val chapterNameTemplate = chapterNameTemplate
 
-        return page
-            .filter {
-                it.media.mediaProfile != "EPUB" || it.media.epubDivinaCompatible
-            }
-            .mapIndexed { index, book ->
-                SChapter.create().apply {
-                    chapter_number = if (!isFromReadList) book.metadata.numberSort else index + 1F
-                    url = "$baseUrl/api/v1/books/${book.id}"
-                    name = book.getChapterName(chapterNameTemplate, isFromReadList)
-                    scanlator =
-                        if (isFromReadList) "" else book.getChapterName("{pages}p || {size}", false)
-                    date_upload = when {
-                        book.metadata.releaseDate != null -> parseDate(book.metadata.releaseDate)
-                        book.created != null -> parseDateTime(book.created)
+        return page.filter {
+            it.media.mediaProfile != "EPUB" || it.media.epubDivinaCompatible
+        }.mapIndexed { index, book ->
+            SChapter.create().apply {
+                chapter_number = if (!isFromReadList) book.metadata.numberSort else index + 1F
+                url = "$baseUrl/api/v1/books/${book.id}"
+                name = book.getChapterName(chapterNameTemplate, isFromReadList)
+                scanlator =
+                    if (isFromReadList) "" else book.getChapterName("{pages}p || {size}", false)
+                date_upload = when {
+                    book.metadata.releaseDate != null -> parseDate(book.metadata.releaseDate)
+                    book.created != null -> parseDateTime(book.created)
 
-                        // XXX: `Book.fileLastModified` actually uses the server's running timezone,
-                        // not UTC, even if the timestamp ends with a Z! We cannot determine the
-                        // server's timezone, which is why this is a last resort option.
-                        else -> parseDateTime(book.fileLastModified)
-                    }
+                    // XXX: `Book.fileLastModified` actually uses the server's running timezone,
+                    // not UTC, even if the timestamp ends with a Z! We cannot determine the
+                    // server's timezone, which is why this is a last resort option.
+                    else -> parseDateTime(book.fileLastModified)
                 }
             }
-            .sortedByDescending { it.chapter_number }
+        }.sortedByDescending { it.chapter_number }
     }
 
     override fun pageListRequest(chapter: SChapter) = GET("${chapter.url}/pages")
@@ -249,8 +278,8 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
         val pages = response.parseAs<List<PageDto>>()
 
         return pages.map {
-            val url = "${response.request.url}/${it.number}" +
-                if (!SUPPORTED_IMAGE_TYPES.contains(it.mediaType)) {
+            val url =
+                "${response.request.url}/${it.number}" + if (!SUPPORTED_IMAGE_TYPES.contains(it.mediaType)) {
                     "?convert=png"
                 } else {
                     ""
@@ -479,20 +508,15 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
         scope.launch {
             try {
                 libraries = client.newCall(GET("$baseUrl/api/v1/libraries")).await().parseAs()
-                collections = client
-                    .newCall(GET("$baseUrl/api/v1/collections?unpaged=true"))
-                    .await()
-                    .parseAs<PageWrapperDto<CollectionDto>>()
-                    .content
+                collections =
+                    client.newCall(GET("$baseUrl/api/v1/collections?unpaged=true")).await()
+                        .parseAs<PageWrapperDto<CollectionDto>>().content
                 genres = client.newCall(GET("$baseUrl/api/v1/genres")).await().parseAs()
                 tags = client.newCall(GET("$baseUrl/api/v1/tags")).await().parseAs()
                 publishers = client.newCall(GET("$baseUrl/api/v1/publishers")).await().parseAs()
                 languages = client.newCall(GET("$baseUrl/api/v1/languages")).await().parseAs()
-                authors = client
-                    .newCall(GET("$baseUrl/api/v1/authors"))
-                    .await()
-                    .parseAs<List<AuthorDto>>()
-                    .groupBy { it.role }
+                authors = client.newCall(GET("$baseUrl/api/v1/authors")).await()
+                    .parseAs<List<AuthorDto>>().groupBy { it.role }
                 fetchFilterStatus = FetchFilterStatus.FETCHED
             } catch (e: Exception) {
                 fetchFilterStatus = FetchFilterStatus.NOT_FETCHED
@@ -503,8 +527,7 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
 
     fun Response.isFromReadList() = request.url.toString().contains("/api/v1/readlists")
 
-    private inline fun <reified T> Response.parseAs(): T =
-        json.decodeFromString(body.string())
+    private inline fun <reified T> Response.parseAs(): T = json.decodeFromString(body.string())
 
     private val logTag by lazy { "komga${if (suffix.isNotBlank()) ".$suffix" else ""}" }
 
@@ -518,9 +541,7 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
 }
 
 private enum class FetchFilterStatus {
-    NOT_FETCHED,
-    FETCHING,
-    FETCHED,
+    NOT_FETCHED, FETCHING, FETCHED,
 }
 
 private val PREF_EXTRA_SOURCES_ENTRIES = (0..10).map { it.toString() }.toTypedArray()

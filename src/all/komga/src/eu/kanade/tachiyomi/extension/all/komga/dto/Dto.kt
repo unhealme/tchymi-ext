@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.extension.all.komga.dto
 
-import eu.kanade.tachiyomi.extension.all.komga.langFromCode
 import eu.kanade.tachiyomi.source.model.SManga
 import kotlinx.serialization.Serializable
 import org.apache.commons.text.StringSubstitutor
@@ -23,33 +22,10 @@ class SeriesDto(
     val metadata: SeriesMetadataDto,
     val booksMetadata: BookMetadataAggregationDto,
 ) {
-    fun toSManga(baseUrl: String, collections: List<CollectionDto>): SManga {
-        val lang = langFromCode(metadata.language, metadata.language)
-        return SManga.create().apply {
-            title = metadata.title
-            url = "$baseUrl/api/v1/series/$id"
-            thumbnail_url = "$url/thumbnail"
-            status = when {
-                metadata.status == "ENDED" && metadata.totalBookCount != null && booksCount < metadata.totalBookCount -> SManga.PUBLISHING_FINISHED
-                metadata.status == "ENDED" -> SManga.COMPLETED
-                metadata.status == "ONGOING" -> SManga.ONGOING
-                metadata.status == "ABANDONED" -> SManga.CANCELLED
-                metadata.status == "HIATUS" -> SManga.ON_HIATUS
-                else -> SManga.UNKNOWN
-            }
-            genre = (
-                collections.filter { it.seriesIds.contains(id) }.map { "Collection:${it.name}" } +
-                    (if (lang.isBlank()) emptyList() else listOf("Language:$lang")) +
-                    metadata.genres.map { "Genre:${it.toCamelCase()}" }.distinct() +
-                    (metadata.tags + booksMetadata.tags).map { "Tag:${it.toCamelCase()}" }
-                        .distinct()
-                ).joinToString()
-            description = metadata.summary.ifBlank { booksMetadata.summary }
-            booksMetadata.authors.groupBy({ it.role }, { it.name }).let { map ->
-                author = map["writer"]?.distinct()?.joinToString()
-                artist = map["penciller"]?.distinct()?.joinToString()
-            }
-        }
+    fun toBasicSManga(baseUrl: String) = SManga.create().apply {
+        title = metadata.title
+        url = "$baseUrl/api/v1/series/$id"
+        thumbnail_url = "$url/thumbnail"
     }
 }
 
@@ -196,7 +172,7 @@ class ReadListDto(
     }
 }
 
-private fun String.toCamelCase(): String {
+fun String.toCamelCase(): String {
     val result = StringBuilder(length)
     var capitalize = true
     for (char in this) {
