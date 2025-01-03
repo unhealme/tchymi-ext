@@ -14,15 +14,3 @@ class PageWrapperDto<T>(
     val totalElements: Long,
     val totalPages: Long,
 )
-
-@Serializable
-class PageWrapperBaseDto(
-    val empty: Boolean,
-    val first: Boolean,
-    val last: Boolean,
-    val number: Long,
-    val numberOfElements: Long,
-    val size: Long,
-    val totalElements: Long,
-    val totalPages: Long,
-)

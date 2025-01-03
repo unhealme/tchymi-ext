@@ -14,7 +14,6 @@ import eu.kanade.tachiyomi.extension.all.komga.dto.BookDto
 import eu.kanade.tachiyomi.extension.all.komga.dto.CollectionDto
 import eu.kanade.tachiyomi.extension.all.komga.dto.LibraryDto
 import eu.kanade.tachiyomi.extension.all.komga.dto.PageDto
-import eu.kanade.tachiyomi.extension.all.komga.dto.PageWrapperBaseDto
 import eu.kanade.tachiyomi.extension.all.komga.dto.PageWrapperDto
 import eu.kanade.tachiyomi.extension.all.komga.dto.ReadListDto
 import eu.kanade.tachiyomi.extension.all.komga.dto.SeriesDto
@@ -140,13 +139,13 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
             else -> "series"
         }
 
-        val url = "$baseUrl/api/v1/$type?search=$query&deleted=false".toHttpUrl()
+        val url = "$baseUrl/api/v1/$type?search=$query&page=${page - 1}&deleted=false".toHttpUrl()
             .newBuilder()
         val filterList = filters.ifEmpty { getFilterList() }
         val defaultLibraries = defaultLibraries
 
         if (filterList.filterIsInstance<LibraryFilter>()
-            .isEmpty() && defaultLibraries.isNotEmpty()
+                .isEmpty() && defaultLibraries.isNotEmpty()
         ) {
             url.addQueryParameter("library_id", defaultLibraries.joinToString(","))
         }
@@ -164,43 +163,16 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
                         4 -> "booksMetadata.releaseDate"
                         5 -> "booksCount"
                         6 -> "name"
-                        7 -> "_random"
+                        7 -> "random"
                         else -> return@forEach
                     } + "," + if (state.ascending) "asc" else "desc"
 
-                    if (sortCriteria.startsWith("_random")) {
-                        randomSort = true
-                    } else {
-                        randomSort = false
-                        url.addQueryParameter("sort", sortCriteria)
-                    }
+                    url.addQueryParameter("sort", sortCriteria)
                 }
 
                 else -> {}
             }
         }
-
-        if (page == 1) {
-            scope.launch {
-                totalPages = try {
-                    client.newCall(GET(url.build(), headers)).await()
-                        .parseAs<PageWrapperBaseDto>().totalPages
-                } catch (e: Exception) {
-                    0
-                }
-            }
-            pageSequence = shufflePages(totalPages)
-        }
-
-        url.addQueryParameter(
-            "page",
-            if (randomSort && page - 1 <= totalPages) {
-                pageSequence.next()
-                    .toString()
-            } else {
-                "${page - 1}"
-            },
-        )
 
         return GET(url.build(), headers)
     }
@@ -211,22 +183,10 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
     private fun processSeriesPage(response: Response, baseUrl: String): MangasPage {
         if (response.isFromReadList()) {
             val data = response.parseAs<PageWrapperDto<ReadListDto>>()
-            val mangas = data.content.map {
-                it.toSManga(baseUrl)
-            }
-            return MangasPage(
-                if (randomSort) mangas.shuffled() else mangas,
-                !data.last,
-            )
+            return MangasPage(data.content.map { it.toSManga(baseUrl) }, !data.last)
         } else {
             val data = response.parseAs<PageWrapperDto<SeriesDto>>()
-            val mangas = data.content.map {
-                it.toSManga(baseUrl, collections)
-            }
-            return MangasPage(
-                if (randomSort) mangas.shuffled() else mangas,
-                !data.last,
-            )
+            return MangasPage(data.content.map { it.toSManga(baseUrl, collections) }, !data.last)
         }
     }
 
@@ -268,7 +228,7 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
                     url = "$baseUrl/api/v1/books/${book.id}"
                     name = book.getChapterName(chapterNameTemplate, isFromReadList)
                     scanlator =
-                        if (isFromReadList) "" else book.getChapterName("{pages}p | {size}", false)
+                        if (isFromReadList) "" else book.getChapterName("{pages}p || {size}", false)
                     date_upload = when {
                         book.metadata.releaseDate != null -> parseDate(book.metadata.releaseDate)
                         book.created != null -> parseDateTime(book.created)
@@ -303,7 +263,10 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
     override fun imageUrlParse(response: Response): String = throw UnsupportedOperationException()
 
     override fun imageRequest(page: Page): Request {
-        return GET(page.imageUrl!!, headers = headersBuilder().add("Accept", "image/*,*/*;q=0.8").build())
+        return GET(
+            page.imageUrl!!,
+            headers = headersBuilder().add("Accept", "image/*,*/*;q=0.8").build(),
+        )
     }
 
     override fun getFilterList(): FilterList {
@@ -346,7 +309,7 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
                 publishers.map { UriMultiSelectOption(it) },
             ),
             UriMultiSelectFilter(
-                "Language",
+                "Languages",
                 "language",
                 languages.map { UriMultiSelectOption(langFromCode(it, "Unknown"), it) },
             ),
@@ -500,10 +463,6 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
     private var publishers = emptySet<String>()
     private var languages = emptySet<String>()
     private var authors = emptyMap<String, List<AuthorDto>>() // roles to list of authors
-
-    private var randomSort = false
-    private var totalPages: Long = 0
-    private lateinit var pageSequence: Iterator<Long>
 
     private var fetchFilterStatus = FetchFilterStatus.NOT_FETCHED
     private var fetchFiltersAttempts = 0

@@ -10,13 +10,12 @@ import java.text.ParseException
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
-import kotlin.random.Random
-import kotlin.random.nextLong
 
-val formatterDate = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-    .apply { timeZone = TimeZone.getTimeZone("UTC") }
-val formatterDateTime = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
-    .apply { timeZone = TimeZone.getTimeZone("UTC") }
+val formatterDate =
+    SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
+val formatterDateTime = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).apply {
+    timeZone = TimeZone.getTimeZone("UTC")
+}
 
 private val langISOMap = mapOf<String, String>(
     "ar" to "Arabic",
@@ -55,11 +54,6 @@ fun langFromCode(code: String, def: String = "Other"): String =
 
 fun codeFromLang(lang: String, def: String = "N/A"): String =
     langISOMap.filterValues { it == lang }.keys.firstOrNull() ?: def
-
-fun shufflePages(maxItem: Long): Iterator<Long> =
-    generateSequence { Random.nextLong(0.rangeTo(maxItem)) }
-        .distinct()
-        .iterator()
 
 fun parseDate(date: String): Long = try {
     formatterDate.parse(date)!!.time
@@ -124,8 +118,8 @@ fun PreferenceScreen.addEditTextPreference(
                             val isValid = text.isBlank() || validate(text)
 
                             editText.error = if (!isValid) validationMessage else null
-                            editText.rootView.findViewById<Button>(android.R.id.button1)
-                                ?.isEnabled = editText.error == null
+                            editText.rootView.findViewById<Button>(android.R.id.button1)?.isEnabled =
+                                editText.error == null
                         }
                     },
                 )
