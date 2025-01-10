@@ -32,8 +32,6 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
@@ -136,13 +134,13 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
             else -> "series"
         }
 
-        val url = "$baseUrl/api/v1/$type?search=$query&page=${page - 1}&deleted=false".toHttpUrl()
+        val url = "$baseUrl/api/v1/$type?search=$query&deleted=false".toHttpUrl()
             .newBuilder()
         val filterList = filters.ifEmpty { getFilterList() }
         val defaultLibraries = defaultLibraries
 
         if (filterList.filterIsInstance<LibraryFilter>()
-            .isEmpty() && defaultLibraries.isNotEmpty()
+                .isEmpty() && defaultLibraries.isNotEmpty()
         ) {
             url.addQueryParameter("library_id", defaultLibraries.joinToString(","))
         }
@@ -165,6 +163,14 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
                     } + "," + if (state.ascending) "asc" else "desc"
 
                     url.addQueryParameter("sort", sortCriteria)
+
+                    if (state.index == 7) {
+                        url.addQueryParameter("unpaged", "true")
+                    } else {
+                        url.addQueryParameter("page", (page - 1).toString())
+                        url.addQueryParameter("size", 100.toString())
+                    }
+
                 }
 
                 else -> {}
@@ -201,12 +207,11 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
 
     private suspend fun SeriesDto.toSManga(): SManga {
         val lang = langFromCode(metadata.language, metadata.language)
-        val collections = coroutineScope {
-            async {
-                client.newCall(GET("$baseUrl/api/v1/series/$id/collections")).await()
-                    .parseAs<List<CollectionDto>>()
-            }
+        val collections = scope.async {
+            client.newCall(GET("$baseUrl/api/v1/series/$id/collections")).await()
+                .parseAs<List<CollectionDto>>()
         }
+
         return SManga.create().apply {
             title = metadata.title
             url = "$baseUrl/api/v1/series/$id"
@@ -505,7 +510,7 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
         fetchFilterStatus = FetchFilterStatus.FETCHING
         fetchFiltersAttempts++
 
-        scope.launch {
+        runBlocking {
             try {
                 libraries = client.newCall(GET("$baseUrl/api/v1/libraries")).await().parseAs()
                 collections =
