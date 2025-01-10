@@ -83,6 +83,8 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
 
     private val password by lazy { preferences.getString(PREF_PASSWORD, "")!! }
 
+    private val pageSize by lazy { preferences.getString(PREF_PAGE_SIZE, "")!! }
+
     private val defaultLibraries
         get() = preferences.getStringSet(PREF_DEFAULT_LIBRARIES, emptySet())!!
 
@@ -134,13 +136,14 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
             else -> "series"
         }
 
-        val url = "$baseUrl/api/v1/$type?search=$query&deleted=false".toHttpUrl()
-            .newBuilder()
+        val url =
+            "$baseUrl/api/v1/$type?search=$query&page=${page - 1}&size=$pageSize&deleted=false".toHttpUrl()
+                .newBuilder()
         val filterList = filters.ifEmpty { getFilterList() }
         val defaultLibraries = defaultLibraries
 
         if (filterList.filterIsInstance<LibraryFilter>()
-                .isEmpty() && defaultLibraries.isNotEmpty()
+            .isEmpty() && defaultLibraries.isNotEmpty()
         ) {
             url.addQueryParameter("library_id", defaultLibraries.joinToString(","))
         }
@@ -163,14 +166,6 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
                     } + "," + if (state.ascending) "asc" else "desc"
 
                     url.addQueryParameter("sort", sortCriteria)
-
-                    if (state.index == 7) {
-                        url.addQueryParameter("unpaged", "true")
-                    } else {
-                        url.addQueryParameter("page", (page - 1).toString())
-                        url.addQueryParameter("size", 100.toString())
-                    }
-
                 }
 
                 else -> {}
@@ -431,6 +426,21 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
             key = PREF_PASSWORD,
             restartRequired = true,
         )
+        screen.addEditTextPreference(
+            title = "Items per Page",
+            default = "20",
+            summary = pageSize.ifBlank { "20" },
+            inputType = InputType.TYPE_CLASS_NUMBER,
+            validate = {
+                when (val page = it.toIntOrNull(10)) {
+                    is Int -> page > 0
+                    else -> false
+                }
+            },
+            validationMessage = "Page must be a number more than 0",
+            key = PREF_PAGE_SIZE,
+            restartRequired = true,
+        )
 
         MultiSelectListPreference(screen.context).apply {
             key = PREF_DEFAULT_LIBRARIES
@@ -555,6 +565,7 @@ private const val PREF_DISPLAY_NAME = "Source display name"
 private const val PREF_ADDRESS = "Address"
 private const val PREF_USERNAME = "Username"
 private const val PREF_PASSWORD = "Password"
+private const val PREF_PAGE_SIZE = "Number of items to fetch per page"
 private const val PREF_DEFAULT_LIBRARIES = "Default libraries"
 private const val PREF_CHAPTER_NAME_TEMPLATE = "Chapter name template"
 private const val PREF_CHAPTER_NAME_TEMPLATE_DEFAULT = "{number} - {title}"
