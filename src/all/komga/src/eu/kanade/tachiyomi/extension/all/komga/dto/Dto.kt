@@ -176,6 +176,9 @@ fun String.toCamelCase(): String {
     val result = StringBuilder(length)
     var capitalize = true
     for (char in this) {
+        if (char.isUpperCase()) {
+            return this
+        }
         result.append(
             if (capitalize) {
                 char.uppercase()
