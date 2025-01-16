@@ -32,6 +32,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
@@ -143,7 +144,7 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
         val defaultLibraries = defaultLibraries
 
         if (filterList.filterIsInstance<LibraryFilter>()
-            .isEmpty() && defaultLibraries.isNotEmpty()
+                .isEmpty() && defaultLibraries.isNotEmpty()
         ) {
             url.addQueryParameter("library_id", defaultLibraries.joinToString(","))
         }
@@ -520,7 +521,7 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
         fetchFilterStatus = FetchFilterStatus.FETCHING
         fetchFiltersAttempts++
 
-        runBlocking {
+        scope.launch {
             try {
                 libraries = client.newCall(GET("$baseUrl/api/v1/libraries")).await().parseAs()
                 collections =
