@@ -155,6 +155,8 @@ class Hitomi(
             var random = false
             var ascending = false
             var queryMode = QueryMode.AND
+            var tagSep = ","
+            val tagFilters = mutableListOf<TextFilter>()
 
             val terms = query
                 .trim()
@@ -180,23 +182,31 @@ class Hitomi(
                     }
 
                     is TextFilter -> {
-                        if (it.state.isNotEmpty()) {
-                            terms += it.state.split(",").filter(String::isNotBlank).map { tag ->
-                                val trimmed = tag.trim()
-                                buildString {
-                                    if (trimmed.startsWith('-')) {
-                                        append("-")
-                                    }
-                                    append(it.type)
-                                    append(":")
-                                    append(trimmed.lowercase().removePrefix("-"))
-                                }
+                        if (it.type == "sep") {
+                            if (it.state.isNotEmpty()) {
+                                tagSep = it.state
                             }
+                        } else if (it.state.isNotEmpty()) {
+                            tagFilters += it
                         }
                     }
 
                     is QueryModeFilter -> queryMode = it.values[it.state]
                     else -> {}
+                }
+            }
+
+            for (tags in tagFilters) {
+                terms += tags.state.split(tagSep).filter(String::isNotBlank).map { tag ->
+                    val trimmed = tag.trim()
+                    buildString {
+                        if (trimmed.startsWith('-')) {
+                            append("-")
+                        }
+                        append(tags.type)
+                        append(":")
+                        append(trimmed.lowercase().removePrefix("-"))
+                    }
                 }
             }
 
