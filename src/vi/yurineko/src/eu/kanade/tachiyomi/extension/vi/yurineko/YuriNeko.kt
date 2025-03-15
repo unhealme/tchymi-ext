@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.extension.vi.yurineko
 
-import android.app.Application
 import android.content.SharedPreferences
 import android.widget.Toast
 import androidx.preference.EditTextPreference
@@ -21,6 +20,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
+import keiyoushi.utils.getPreferences
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import okhttp3.CacheControl
@@ -30,8 +30,6 @@ import okhttp3.Interceptor
 import okhttp3.Request
 import okhttp3.Response
 import rx.Observable
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import java.io.IOException
 import java.net.URLDecoder
 import java.util.concurrent.TimeUnit
@@ -40,7 +38,7 @@ class YuriNeko : HttpSource(), ConfigurableSource {
 
     override val name = "YuriNeko"
 
-    private val defaultDomain = "yurineko.click"
+    private val defaultDomain = "yurineko.site"
 
     override val baseUrl by lazy { "https://${getPrefDomain()}" }
 
@@ -49,6 +47,8 @@ class YuriNeko : HttpSource(), ConfigurableSource {
     override val supportsLatest = false
 
     private val apiUrl by lazy { "https://api.${getPrefDomain()}" }
+
+    private val storageUrl by lazy { "https://storage.${getPrefDomain()}" }
 
     override val client = network.cloudflareClient.newBuilder()
         .rateLimit(3, 1, TimeUnit.SECONDS)
@@ -98,7 +98,7 @@ class YuriNeko : HttpSource(), ConfigurableSource {
     override fun popularMangaParse(response: Response): MangasPage {
         val mangaListDto = response.parseAs<MangaListDto>()
         val currentPage = response.request.url.queryParameter("page")!!.toFloat()
-        return mangaListDto.toMangasPage(currentPage)
+        return mangaListDto.toMangasPage(currentPage, storageUrl)
     }
 
     override fun latestUpdatesRequest(page: Int): Request = throw UnsupportedOperationException()
@@ -188,7 +188,7 @@ class YuriNeko : HttpSource(), ConfigurableSource {
     override fun mangaDetailsRequest(manga: SManga): Request = GET("$baseUrl${manga.url}")
 
     override fun mangaDetailsParse(response: Response): SManga =
-        response.parseAs<MangaDto>().toSManga()
+        response.parseAs<MangaDto>().toSManga(storageUrl)
 
     override fun chapterListRequest(manga: SManga): Request = GET("$apiUrl${manga.url}")
 
@@ -201,7 +201,7 @@ class YuriNeko : HttpSource(), ConfigurableSource {
     override fun pageListRequest(chapter: SChapter): Request = GET("$apiUrl${chapter.url}")
 
     override fun pageListParse(response: Response): List<Page> =
-        response.parseAs<ReadResponseDto>().toPageList()
+        response.parseAs<ReadResponseDto>().toPageList(storageUrl)
 
     override fun imageUrlParse(response: Response): String = throw UnsupportedOperationException()
 
@@ -406,8 +406,7 @@ class YuriNeko : HttpSource(), ConfigurableSource {
     private inline fun <reified T> Response.parseAs(): T = use {
         json.decodeFromString(body.string())
     }
-    private val preferences: SharedPreferences =
-        Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
+    private val preferences: SharedPreferences = getPreferences()
 
     init {
         preferences.getString(DEFAULT_DOMAIN_PREF, null).let { prefDefaultDomain ->
