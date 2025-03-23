@@ -79,7 +79,7 @@ class BookDto(
     val size: String,
     val media: MediaDto,
     val metadata: BookMetadataDto,
-) {
+) : ConvertibleToSManga {
     fun getChapterName(template: String, isFromReadList: Boolean): String {
         val values = hashMapOf(
             "title" to metadata.title,
@@ -101,6 +101,17 @@ class BookDto(
 
             append(sub.replace(template))
         }
+    }
+
+    override fun toSManga(baseUrl: String) = SManga.create().apply {
+        title = metadata.title
+        url = "$baseUrl/api/v1/books/$id"
+        thumbnail_url = "$url/thumbnail"
+        status = SManga.UNKNOWN
+        genre = metadata.tags.distinct().joinToString(", ")
+        description = metadata.summary
+        author = metadata.authors.joinToString { it.name }
+        artist = author
     }
 }
 
@@ -134,6 +145,8 @@ class BookMetadataDto(
     val releaseDateLock: Boolean,
     val authors: List<AuthorDto>,
     val authorsLock: Boolean,
+    val tags: Set<String>,
+    val tagsLock: Boolean,
 )
 
 @Serializable

@@ -14,22 +14,16 @@ internal class TypeSelect : Filter.Select<String>(
     arrayOf(
         Komga.TYPE_SERIES,
         Komga.TYPE_READLISTS,
+        Komga.TYPE_BOOKS,
     ),
 )
 
 internal class SeriesSort(selection: Selection? = null) : Filter.Sort(
     "Sort",
-    arrayOf(
-        "Relevance",
-        "Alphabetically",
-        "Date added",
-        "Date updated",
-        "Release date",
+    arrayOf("Relevance", "Alphabetically", "Date added", "Date updated", "Release date",
         "Books count",
-        "Folder name",
-        "Random",
-    ),
-    selection ?: Selection(0, false),
+        "Folder name", "Random"),
+    selection ?: Selection(0, true),
 )
 
 internal class UnreadFilter : Filter.CheckBox("Unread", false), UriFilter {
@@ -76,8 +70,7 @@ internal class LibraryFilter(
     },
 )
 
-internal class UriMultiSelectOption(name: String, val id: String = name) :
-    Filter.CheckBox(name, false)
+internal class UriMultiSelectOption(name: String, val id: String = name) : Filter.CheckBox(name, false)
 
 internal open class UriMultiSelectFilter(
     name: String,
