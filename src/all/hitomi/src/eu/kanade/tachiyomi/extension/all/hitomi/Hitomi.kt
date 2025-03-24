@@ -562,13 +562,8 @@ class Hitomi(
             ).joinToString()
         thumbnail_url = files.first().let {
             val hash = it.hash
-            "https://${
-            getSubdomain(
-                hash,
-                "avif",
-                true,
-            )
-            }.$domain/avifbigtn/${thumbPathFromHash(hash)}/$hash.avif"
+            val subdomain = getSubdomain(hash, "avif", true)
+            "https://$subdomain.$domain/avifbigtn/${thumbPathFromHash(hash)}/$hash.avif"
         }
         description = buildString {
             append("Gallery ID: ${id.content}", "\n")
@@ -634,30 +629,13 @@ class Hitomi(
             val hash = img.hash
 
             val typePref = imageType()
-            val webp = img.haswebp && typePref == "webp"
+            val ext = if (img.haswebp && typePref == "webp") "webp" else "avif"
 
             val commonId = commonImageId()
             val imageId = imageIdFromHash(hash)
+            val subdomain = getSubdomain(hash, ext, false)
 
-            val imageUrl = when {
-                webp ->
-                    "https://${
-                    getSubdomain(
-                        hash,
-                        "webp",
-                        false,
-                    )
-                    }.$domain/$commonId$imageId/$hash.webp"
-
-                else ->
-                    "https://${
-                    getSubdomain(
-                        hash,
-                        "avif",
-                        false,
-                    )
-                    }.$domain/$commonId$imageId/$hash.avif"
-            }
+            val imageUrl = "https://$subdomain.$domain/$commonId$imageId/$hash.$ext"
 
             Page(
                 idx,
@@ -746,9 +724,9 @@ class Hitomi(
     }
 
     // subdomain_from_url <-- common.js
-    private fun getSubdomain(hash: String, ext: String, thumb: Boolean): String {
+    private suspend fun getSubdomain(hash: String, ext: String, thumb: Boolean): String {
         val imageId = imageIdFromHash(hash)
-        val offset = runBlocking { subdomainOffset(imageId) }
+        val offset = subdomainOffset(imageId)
         return if (thumb) {
             (97 + offset).toChar() + "tn"
         } else {
@@ -824,26 +802,9 @@ class Hitomi(
 
             val commonId = runBlocking { commonImageId() }
             val imageId = imageIdFromHash(hash)
+            val subdomain = runBlocking { getSubdomain(hash, ext, false) }
 
-            val newUrl = when (ext) {
-                "webp" ->
-                    "https://${
-                    getSubdomain(
-                        hash,
-                        "webp",
-                        false,
-                    )
-                    }.$domain/$commonId$imageId/$hash.$ext"
-
-                else ->
-                    "https://${
-                    getSubdomain(
-                        hash,
-                        ext,
-                        false,
-                    )
-                    }.$domain/$commonId$imageId/$hash.$ext"
-            }
+            val newUrl = "https://$subdomain.$domain/$commonId$imageId/$hash.$ext"
             val newRequest = request.newBuilder().url(newUrl).build()
             return chain.proceed(newRequest)
         }
