@@ -26,9 +26,12 @@ class Gallery(
 class ImageFile(
     val hash: String,
     // val haswebp: Int,
+    val name: String,
     val hasavif: Int = 0,
-    val hasjxl: Int = 0,
-)
+    // val hasjxl: Int = 0,
+) {
+    val haswebp get() = name.split('.').lastOrNull() == "webp"
+}
 
 @Serializable
 class Tag(

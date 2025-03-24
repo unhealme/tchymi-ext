@@ -63,7 +63,7 @@ class Hitomi(
     private val json: Json by injectLazy()
 
     private val REGEX_IMAGE_URL =
-        """https://[wa]?\d\.$domain/\d+?/\d+/([0-9a-f]{64})\.\1""".toRegex()
+        """https://[wa]\d\.$domain/\d+/\d+/([0-9a-f]{64})\.\1""".toRegex()
 
     override val client = network.cloudflareClient.newBuilder()
         .addInterceptor(::jxlContentTypeInterceptor)
@@ -562,10 +562,13 @@ class Hitomi(
             ).joinToString()
         thumbnail_url = files.first().let {
             val hash = it.hash
-            val imageId = imageIdFromHash(hash)
-            val subDomain = 'a' + subdomainOffset(imageId)
-
-            "https://tn.$domain/webpbigtn/${thumbPathFromHash(hash)}.webp"
+            "https://${
+            getSubdomain(
+                hash,
+                "avif",
+                true,
+            )
+            }.$domain/avifbigtn/${thumbPathFromHash(hash)}/$hash.avif"
         }
         description = buildString {
             append("Gallery ID: ${id.content}", "\n")
@@ -631,17 +634,29 @@ class Hitomi(
             val hash = img.hash
 
             val typePref = imageType()
-            val avif = img.hasavif == 1 && typePref == "avif"
-            val jxl = img.hasjxl == 1 && typePref == "jxl"
+            val webp = img.haswebp && typePref == "webp"
 
             val commonId = commonImageId()
             val imageId = imageIdFromHash(hash)
-            val subOffset = subdomainOffset(imageId)
 
             val imageUrl = when {
-                jxl -> "https://$subOffset.$domain/$commonId/$imageId/$hash.jxl"
-                avif -> "https://a$subOffset.$domain/$commonId/$imageId/$hash.avif"
-                else -> "https://w$subOffset.$domain/$commonId/$imageId/$hash.webp"
+                webp ->
+                    "https://${
+                    getSubdomain(
+                        hash,
+                        "webp",
+                        false,
+                    )
+                    }.$domain/$commonId$imageId/$hash.webp"
+
+                else ->
+                    "https://${
+                    getSubdomain(
+                        hash,
+                        "avif",
+                        false,
+                    )
+                    }.$domain/$commonId$imageId/$hash.avif"
             }
 
             Page(
@@ -710,7 +725,7 @@ class Hitomi(
     // m <-- gg.js
     private suspend fun subdomainOffset(imageId: Int): Int {
         refreshScript()
-        return (subdomainOffsetMap[imageId] ?: subdomainOffsetDefault) + 1
+        return subdomainOffsetMap[imageId] ?: subdomainOffsetDefault
     }
 
     // b <-- gg.js
@@ -727,15 +742,30 @@ class Hitomi(
 
     // real_full_path_from_hash <-- common.js
     private fun thumbPathFromHash(hash: String): String {
-        return hash.replace(Regex("""^.*(..)(.)$"""), "$2/$1/$hash")
+        return hash.replace(Regex("""^.*(..)(.)$"""), "$2/$1")
+    }
+
+    // subdomain_from_url <-- common.js
+    private fun getSubdomain(hash: String, ext: String, thumb: Boolean): String {
+        val imageId = imageIdFromHash(hash)
+        val offset = runBlocking { subdomainOffset(imageId) }
+        return if (thumb) {
+            (97 + offset).toChar() + "tn"
+        } else {
+            when (ext) {
+                "webp" -> "w"
+                "avif" -> "a"
+                else -> ""
+            } + (1 + offset).toString()
+        }
     }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         ListPreference(screen.context).apply {
             key = PREF_IMAGETYPE
             title = "Images Type"
-            entries = arrayOf("webp", "avif", "jxl")
-            entryValues = arrayOf("webp", "avif", "jxl")
+            entries = arrayOf("webp", "avif")
+            entryValues = arrayOf("webp", "avif")
             summary = "Clear chapter cache to apply changes"
             setDefaultValue("webp")
         }.also(screen::addPreference)
@@ -794,9 +824,26 @@ class Hitomi(
 
             val commonId = runBlocking { commonImageId() }
             val imageId = imageIdFromHash(hash)
-            val subDomain = 'a' + runBlocking { subdomainOffset(imageId) }
 
-            val newUrl = "https://${subDomain}a.$domain/$ext/$commonId$imageId/$hash.$ext"
+            val newUrl = when (ext) {
+                "webp" ->
+                    "https://${
+                    getSubdomain(
+                        hash,
+                        "webp",
+                        false,
+                    )
+                    }.$domain/$commonId$imageId/$hash.$ext"
+
+                else ->
+                    "https://${
+                    getSubdomain(
+                        hash,
+                        ext,
+                        false,
+                    )
+                    }.$domain/$commonId$imageId/$hash.$ext"
+            }
             val newRequest = request.newBuilder().url(newUrl).build()
             return chain.proceed(newRequest)
         }
