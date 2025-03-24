@@ -52,9 +52,9 @@ class Hitomi(
 
     override val name = "Hitomi"
 
-    private val domain = "hitomi.la"
+    private val domain = "gold-usergeneratedcontent.net"
 
-    override val baseUrl = "https://$domain"
+    override val baseUrl = "https://hitomi.la"
 
     private val ltnUrl = "https://ltn.$domain"
 
@@ -62,7 +62,8 @@ class Hitomi(
 
     private val json: Json by injectLazy()
 
-    private val REGEX_IMAGE_URL = """https://.*?a\.$domain/(jxl|avif|webp)/\d+?/\d+/([0-9a-f]{64})\.\1""".toRegex()
+    private val REGEX_IMAGE_URL =
+        """https://[wa]?\d\.$domain/\d+?/\d+/([0-9a-f]{64})\.\1""".toRegex()
 
     override val client = network.cloudflareClient.newBuilder()
         .addInterceptor(::jxlContentTypeInterceptor)
@@ -564,7 +565,7 @@ class Hitomi(
             val imageId = imageIdFromHash(hash)
             val subDomain = 'a' + subdomainOffset(imageId)
 
-            "https://${subDomain}tn.$domain/webpbigtn/${thumbPathFromHash(hash)}/$hash.webp"
+            "https://tn.$domain/webpbigtn/${thumbPathFromHash(hash)}.webp"
         }
         description = buildString {
             append("Gallery ID: ${id.content}", "\n")
@@ -635,12 +636,12 @@ class Hitomi(
 
             val commonId = commonImageId()
             val imageId = imageIdFromHash(hash)
-            val subDomain = 'a' + subdomainOffset(imageId)
+            val subOffset = subdomainOffset(imageId)
 
             val imageUrl = when {
-                jxl -> "https://${subDomain}a.$domain/jxl/$commonId$imageId/$hash.jxl"
-                avif -> "https://${subDomain}a.$domain/avif/$commonId$imageId/$hash.avif"
-                else -> "https://${subDomain}a.$domain/webp/$commonId$imageId/$hash.webp"
+                jxl -> "https://$subOffset.$domain/$commonId/$imageId/$hash.jxl"
+                avif -> "https://a$subOffset.$domain/$commonId/$imageId/$hash.avif"
+                else -> "https://w$subOffset.$domain/$commonId/$imageId/$hash.webp"
             }
 
             Page(
@@ -709,7 +710,7 @@ class Hitomi(
     // m <-- gg.js
     private suspend fun subdomainOffset(imageId: Int): Int {
         refreshScript()
-        return subdomainOffsetMap[imageId] ?: subdomainOffsetDefault
+        return (subdomainOffsetMap[imageId] ?: subdomainOffsetDefault) + 1
     }
 
     // b <-- gg.js
@@ -726,7 +727,7 @@ class Hitomi(
 
     // real_full_path_from_hash <-- common.js
     private fun thumbPathFromHash(hash: String): String {
-        return hash.replace(Regex("""^.*(..)(.)$"""), "$2/$1")
+        return hash.replace(Regex("""^.*(..)(.)$"""), "$2/$1/$hash")
     }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
