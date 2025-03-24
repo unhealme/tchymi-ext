@@ -79,7 +79,7 @@ class BookDto(
     val size: String,
     val media: MediaDto,
     val metadata: BookMetadataDto,
-) : ConvertibleToSManga {
+) {
     fun getChapterName(template: String, isFromReadList: Boolean): String {
         val values = hashMapOf(
             "title" to metadata.title,
@@ -103,7 +103,7 @@ class BookDto(
         }
     }
 
-    override fun toSManga(baseUrl: String) = SManga.create().apply {
+    fun toSManga(baseUrl: String) = SManga.create().apply {
         title = metadata.title
         url = "$baseUrl/api/v1/books/$id"
         thumbnail_url = "$url/thumbnail"

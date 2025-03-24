@@ -145,7 +145,7 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
         val defaultLibraries = defaultLibraries
 
         if (filterList.filterIsInstance<LibraryFilter>()
-                .isEmpty() && defaultLibraries.isNotEmpty()
+            .isEmpty() && defaultLibraries.isNotEmpty()
         ) {
             url.addQueryParameter("library_id", defaultLibraries.joinToString(","))
         }
@@ -250,7 +250,11 @@ open class Komga(private val suffix: String = "") : ConfigurableSource, Unmetere
     override fun getChapterUrl(chapter: SChapter) = chapter.url.replace("/api/v1/books", "/book")
 
     override fun chapterListRequest(manga: SManga): Request = when {
-        manga.url.isFromBook() -> GET("${manga.url}?unpaged=true&media_status=READY&deleted=false", headers)
+        manga.url.isFromBook() -> GET(
+            "${manga.url}?unpaged=true&media_status=READY&deleted=false",
+            headers,
+        )
+
         else -> GET("${manga.url}/books?unpaged=true&media_status=READY&deleted=false", headers)
     }
 
