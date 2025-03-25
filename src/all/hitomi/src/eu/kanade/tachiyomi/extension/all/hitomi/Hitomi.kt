@@ -563,7 +563,7 @@ class Hitomi(
         thumbnail_url = files.first().let {
             val hash = it.hash
             val subdomain = getSubdomain(hash, "avif", true)
-            "https://$subdomain.$domain/avifbigtn/${thumbPathFromHash(hash)}/$hash.avif"
+            "https://$subdomain.$domain/avifsmallbigtn/${thumbPathFromHash(hash)}/$hash.avif"
         }
         description = buildString {
             append("Gallery ID: ${id.content}", "\n")
