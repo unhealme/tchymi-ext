@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import eu.kanade.tachiyomi.source.online.HttpSource
 import keiyoushi.utils.getPreferencesLazy
+import keiyoushi.utils.tryParse
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -26,21 +27,17 @@ import kotlinx.serialization.json.Json
 import okhttp3.CacheControl
 import okhttp3.Call
 import okhttp3.Interceptor
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.Response
-import okhttp3.ResponseBody.Companion.toResponseBody
 import okhttp3.internal.http2.StreamResetException
 import rx.Observable
 import uy.kohesive.injekt.injectLazy
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
-import java.text.ParseException
 import java.text.SimpleDateFormat
 import java.util.LinkedList
 import java.util.Locale
-import kotlin.math.max
 import kotlin.math.min
 import kotlin.time.Duration.Companion.seconds
 
@@ -62,29 +59,27 @@ class Hitomi(
 
     private val json: Json by injectLazy()
 
-    private val REGEX_IMAGE_URL =
-        """https://[wa]\d\.$domain/\d+/\d+/([0-9a-f]{64})\.\1""".toRegex()
+    private val REGEX_IMAGE_URL = """https://[wa]\d\.$domain/\d+/\d+/([0-9a-f]{64})\.\1""".toRegex()
 
-    override val client = network.cloudflareClient.newBuilder()
-        .addInterceptor(::jxlContentTypeInterceptor)
-        .addInterceptor(::updateImageUrlInterceptor)
-        .apply {
+    override val client =
+        network.cloudflareClient.newBuilder().addInterceptor(::updateImageUrlInterceptor).apply {
             interceptors().add(0, ::streamResetRetry)
-        }
-        .build()
+        }.build()
 
     private val preferences: SharedPreferences by getPreferencesLazy()
     private fun imageType() = preferences.getString(PREF_IMAGETYPE, "webp")!!
 
-    override fun headersBuilder() = super.headersBuilder()
-        .set("referer", "$baseUrl/")
-        .set("origin", baseUrl)
+    override fun headersBuilder() =
+        super.headersBuilder().set("referer", "$baseUrl/").set("origin", baseUrl)
 
     override fun fetchPopularManga(page: Int): Observable<MangasPage> = Observable.fromCallable {
         runBlocking {
-            val entries =
-                getGalleryIDsFromNozomi("popular", "year", nozomiLang, page.nextPageRange())
-                    .toMangaList()
+            val entries = getGalleryIDsFromNozomi(
+                "popular",
+                "year",
+                nozomiLang,
+                page.nextPageRange(),
+            ).toMangaList()
 
             MangasPage(entries, entries.size >= 24)
         }
@@ -92,8 +87,12 @@ class Hitomi(
 
     override fun fetchLatestUpdates(page: Int): Observable<MangasPage> = Observable.fromCallable {
         runBlocking {
-            val entries = getGalleryIDsFromNozomi(null, "index", nozomiLang, page.nextPageRange())
-                .toMangaList()
+            val entries = getGalleryIDsFromNozomi(
+                null,
+                "index",
+                nozomiLang,
+                page.nextPageRange(),
+            ).toMangaList()
 
             MangasPage(entries, entries.size >= 24)
         }
@@ -116,8 +115,7 @@ class Hitomi(
             }
 
             val end = min(page * 25, searchResponse.size)
-            val entries = searchResponse.subList((page - 1) * 25, end)
-                .toMangaList()
+            val entries = searchResponse.subList((page - 1) * 25, end).toMangaList()
             MangasPage(entries, end < searchResponse.size)
         }
     }
@@ -133,9 +131,8 @@ class Hitomi(
         val request = when (range) {
             null -> GET(url, headers)
             else -> {
-                val rangeHeaders = headersBuilder()
-                    .set("Range", "bytes=${range.first}-${range.last}")
-                    .build()
+                val rangeHeaders =
+                    headersBuilder().set("Range", "bytes=${range.first}-${range.last}").build()
 
                 GET(url, rangeHeaders, CacheControl.FORCE_NETWORK)
             }
@@ -148,158 +145,152 @@ class Hitomi(
         query: String,
         filters: FilterList,
         language: String = "all",
-    ): List<Int> =
-        coroutineScope {
-            var sortBy: Pair<String?, String> = Pair(null, "index")
-            var random = false
-            var ascending = false
-            var queryMode = QueryMode.AND
-            var tagSep = ","
-            val tagFilters = mutableListOf<TextFilter>()
+    ): List<Int> = coroutineScope {
+        var sortBy: Pair<String?, String> = Pair(null, "index")
+        var random = false
+        var ascending = false
+        var queryMode = QueryMode.AND
+        var tagSep = ","
+        val tagFilters = mutableListOf<TextFilter>()
 
-            val terms = query
-                .trim()
-                .lowercase()
-                .split(Regex("\\s+"))
-                .toMutableList()
+        val terms = query.trim().lowercase().split(Regex("\\s+")).toMutableList()
 
-            filters.forEach {
-                when (it) {
-                    is SortFilter -> {
-                        sortBy = Pair(it.getArea(), it.getValue())
-                        random = (it.vals[it.state!!.index].first == "Random")
-                        ascending = it.state!!.ascending
+        filters.forEach {
+            when (it) {
+                is SortFilter -> {
+                    sortBy = Pair(it.getArea(), it.getValue())
+                    random = (it.vals[it.state!!.index].first == "Random")
+                    ascending = it.state!!.ascending
+                }
+
+                is TypeFilter -> {
+                    val (activeFilter, inactiveFilters) = it.state.partition { stIt -> stIt.state }
+                    terms += when {
+                        inactiveFilters.size < 5 -> inactiveFilters.map { fil -> "-type:${fil.value}" }
+                        inactiveFilters.size == 5 -> listOf("type:${activeFilter[0].value}")
+                        else -> listOf("type: none")
                     }
+                }
 
-                    is TypeFilter -> {
-                        val (activeFilter, inactiveFilters) = it.state.partition { stIt -> stIt.state }
-                        terms += when {
-                            inactiveFilters.size < 5 -> inactiveFilters.map { fil -> "-type:${fil.value}" }
-                            inactiveFilters.size == 5 -> listOf("type:${activeFilter[0].value}")
-                            else -> listOf("type: none")
+                is TextFilter -> {
+                    if (it.type == "sep") {
+                        if (it.state.isNotEmpty()) {
+                            tagSep = it.state
                         }
-                    }
-
-                    is TextFilter -> {
-                        if (it.type == "sep") {
-                            if (it.state.isNotEmpty()) {
-                                tagSep = it.state
-                            }
-                        } else if (it.state.isNotEmpty()) {
-                            tagFilters += it
-                        }
-                    }
-
-                    is QueryModeFilter -> queryMode = it.values[it.state]
-                    else -> {}
-                }
-            }
-
-            for (tags in tagFilters) {
-                terms += tags.state.split(tagSep).filter(String::isNotBlank).map { tag ->
-                    val trimmed = tag.trim()
-                    buildString {
-                        if (trimmed.startsWith('-')) {
-                            append("-")
-                        }
-                        append(tags.type)
-                        append(":")
-                        append(trimmed.lowercase().removePrefix("-"))
+                    } else if (it.state.isNotEmpty()) {
+                        tagFilters += it
                     }
                 }
-            }
 
-            if (language != "all" && sortBy == Pair(
-                    null,
-                    "index",
-                ) && !terms.any { it.contains(":") }
-            ) {
-                terms += "language:$language"
-            }
-
-            val positiveTerms = LinkedList<String>()
-            val negativeTerms = LinkedList<String>()
-
-            for (term in terms) {
-                if (term.startsWith("-")) {
-                    negativeTerms.push(term.removePrefix("-"))
-                } else if (term.isNotBlank()) {
-                    positiveTerms.push(term)
-                }
-            }
-            positiveTerms.sortBy { if (it.contains(':')) 0 else 1 }
-
-            val positiveResults = positiveTerms.map {
-                async {
-                    try {
-                        getGalleryIDsForQuery(it, language)
-                    } catch (e: IllegalArgumentException) {
-                        if (e.message?.equals("HTTP error 404") == true) {
-                            throw Exception("Unknown query: \"$it\"")
-                        } else {
-                            throw e
-                        }
-                    }
-                }
-            }
-
-            val negativeResults = negativeTerms.map {
-                async {
-                    try {
-                        getGalleryIDsForQuery(it, language)
-                    } catch (e: IllegalArgumentException) {
-                        if (e.message?.equals("HTTP error 404") == true) {
-                            throw Exception("Unknown query: \"$it\"")
-                        } else {
-                            throw e
-                        }
-                    }
-                }
-            }
-
-            val results = when {
-                positiveTerms.isEmpty() || queryMode == QueryMode.OR || sortBy != Pair(
-                    null,
-                    "index",
-                )
-                -> getGalleryIDsFromNozomi(sortBy.first, sortBy.second, language)
-
-                else -> emptySet()
-            }.toMutableSet()
-
-            fun filterPositive(newResults: Set<Int>) {
-                when {
-                    results.isEmpty() -> results.addAll(newResults)
-                    else -> results.retainAll(newResults)
-                }
-            }
-
-            fun filterNegative(newResults: Set<Int>) {
-                results.removeAll(newResults)
-            }
-
-            // positive results
-            when (queryMode) {
-                QueryMode.AND -> positiveResults.forEach {
-                    filterPositive(it.await())
-                }
-
-                QueryMode.OR -> filterPositive(positiveResults.flatMap { it.await() }.toSet())
-            }
-
-            // negative results
-            negativeResults.forEach {
-                filterNegative(it.await())
-            }
-
-            if (random) {
-                results.toList().shuffled()
-            } else if (ascending) {
-                results.toList().reversed()
-            } else {
-                results.toList()
+                is QueryModeFilter -> queryMode = it.values[it.state]
+                else -> {}
             }
         }
+
+        for (tags in tagFilters) {
+            terms += tags.state.split(tagSep).filter(String::isNotBlank).map { tag ->
+                val trimmed = tag.trim()
+                buildString {
+                    if (trimmed.startsWith('-')) {
+                        append("-")
+                    }
+                    append(tags.type)
+                    append(":")
+                    append(trimmed.lowercase().removePrefix("-"))
+                }
+            }
+        }
+
+        if (language != "all" && sortBy == Pair(
+                null,
+                "index",
+            ) && !terms.any { it.contains(":") }
+        ) {
+            terms += "language:$language"
+        }
+
+        val positiveTerms = LinkedList<String>()
+        val negativeTerms = LinkedList<String>()
+
+        for (term in terms) {
+            if (term.startsWith("-")) {
+                negativeTerms.push(term.removePrefix("-"))
+            } else if (term.isNotBlank()) {
+                positiveTerms.push(term)
+            }
+        }
+        positiveTerms.sortBy { if (it.contains(':')) 0 else 1 }
+
+        val positiveResults = positiveTerms.map {
+            async {
+                try {
+                    getGalleryIDsForQuery(it, language)
+                } catch (e: IllegalArgumentException) {
+                    if (e.message?.equals("HTTP error 404") == true) {
+                        throw Exception("Unknown query: \"$it\"")
+                    } else {
+                        throw e
+                    }
+                }
+            }
+        }
+
+        val negativeResults = negativeTerms.map {
+            async {
+                try {
+                    getGalleryIDsForQuery(it, language)
+                } catch (e: IllegalArgumentException) {
+                    if (e.message?.equals("HTTP error 404") == true) {
+                        throw Exception("Unknown query: \"$it\"")
+                    } else {
+                        throw e
+                    }
+                }
+            }
+        }
+
+        val results = when {
+            positiveTerms.isEmpty() || queryMode == QueryMode.OR || sortBy != Pair(
+                null,
+                "index",
+            ) -> getGalleryIDsFromNozomi(sortBy.first, sortBy.second, language)
+
+            else -> emptySet()
+        }.toMutableSet()
+
+        fun filterPositive(newResults: Set<Int>) {
+            when {
+                results.isEmpty() -> results.addAll(newResults)
+                else -> results.retainAll(newResults)
+            }
+        }
+
+        fun filterNegative(newResults: Set<Int>) {
+            results.removeAll(newResults)
+        }
+
+        // positive results
+        when (queryMode) {
+            QueryMode.AND -> positiveResults.forEach {
+                filterPositive(it.await())
+            }
+
+            QueryMode.OR -> filterPositive(positiveResults.flatMap { it.await() }.toSet())
+        }
+
+        // negative results
+        negativeResults.forEach {
+            filterNegative(it.await())
+        }
+
+        if (random) {
+            results.toList().shuffled()
+        } else if (ascending) {
+            results.toList().reversed()
+        } else {
+            results.toList()
+        }
+    }
 
     // search.js
     private suspend fun getGalleryIDsForQuery(
@@ -349,10 +340,7 @@ class Hitomi(
 
         val galleryIDs = mutableSetOf<Int>()
 
-        val buffer =
-            ByteBuffer
-                .wrap(inbuf)
-                .order(ByteOrder.BIG_ENDIAN)
+        val buffer = ByteBuffer.wrap(inbuf).order(ByteOrder.BIG_ENDIAN)
 
         val numberOfGalleryIDs = buffer.int
 
@@ -365,8 +353,7 @@ class Hitomi(
             "inbuf.byteLength ${inbuf.size} != expected_length $expectedLength"
         }
 
-        for (i in 0.until(numberOfGalleryIDs))
-            galleryIDs.add(buffer.int)
+        for (i in 0.until(numberOfGalleryIDs)) galleryIDs.add(buffer.int)
 
         return galleryIDs
     }
@@ -408,10 +395,9 @@ class Hitomi(
         }
 
         fun isLeaf(node: Node): Boolean {
-            for (subnode in node.subNodeAddresses)
-                if (subnode != 0L) {
-                    return false
-                }
+            for (subnode in node.subNodeAddresses) if (subnode != 0L) {
+                return false
+            }
 
             return true
         }
@@ -445,12 +431,9 @@ class Hitomi(
         val bytes = getRangedResponse(nozomiAddress, range)
         val nozomi = mutableSetOf<Int>()
 
-        val arrayBuffer = ByteBuffer
-            .wrap(bytes)
-            .order(ByteOrder.BIG_ENDIAN)
+        val arrayBuffer = ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN)
 
-        while (arrayBuffer.hasRemaining())
-            nozomi.add(arrayBuffer.int)
+        while (arrayBuffer.hasRemaining()) nozomi.add(arrayBuffer.int)
 
         return nozomi
     }
@@ -468,9 +451,7 @@ class Hitomi(
     )
 
     private fun decodeNode(data: ByteArray): Node {
-        val buffer = ByteBuffer
-            .wrap(data)
-            .order(ByteOrder.BIG_ENDIAN)
+        val buffer = ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN)
 
         val uData = data.toUByteArray()
 
@@ -529,10 +510,8 @@ class Hitomi(
         map { id ->
             async {
                 try {
-                    client.newCall(GET("$ltnUrl/galleries/$id.js", headers))
-                        .awaitSuccess()
-                        .parseScriptAs<Gallery>()
-                        .toSManga()
+                    client.newCall(GET("$ltnUrl/galleries/$id.js", headers)).awaitSuccess()
+                        .parseScriptAs<Gallery>().toSManga()
                 } catch (e: IllegalArgumentException) {
                     if (e.message?.equals("HTTP error 404") == true) {
                         return@async null
@@ -550,20 +529,19 @@ class Hitomi(
         author = groups?.joinToString { it.formatted }
         artist = artists?.joinToString { it.formatted }
         genre = (
-            artists?.map { "Artist:${it.formatted}" }.orEmpty() +
-                groups?.map { "Group:${it.formatted}" }.orEmpty() +
-                type?.let { listOf("Type: ${galleryType[it] ?: it}") }.orEmpty() +
-                language?.let { listOf("Language: ${it.replaceFirstChar { ch -> ch.uppercase() }}") }
-                    .orEmpty() +
-                parodys?.map { "Series:${it.formatted}" }.orEmpty() +
-                characters?.map { "Character:${it.formatted}" }.orEmpty() +
-                tags?.map { tag -> tag.formatted }?.sortedBy { it.lowercase() }
-                    .orEmpty()
+            artists?.map { "Artist:${it.formatted}" }
+                .orEmpty() + groups?.map { "Group:${it.formatted}" }
+                .orEmpty() + type?.let { listOf("Type: ${galleryType[it] ?: it}") }
+                .orEmpty() + language?.let { listOf("Language: ${it.replaceFirstChar { ch -> ch.uppercase() }}") }
+                .orEmpty() + parodys?.map { "Series:${it.formatted}" }
+                .orEmpty() + characters?.map { "Character:${it.formatted}" }
+                .orEmpty() + tags?.map { tag -> tag.formatted }?.sortedBy { it.lowercase() }
+                .orEmpty()
             ).joinToString()
         thumbnail_url = files.first().let {
             val hash = it.hash
-            val subdomain = getSubdomain(hash, "avif", true)
-            "https://$subdomain.$domain/avifsmallbigtn/${thumbPathFromHash(hash)}/$hash.avif"
+            val subdomain = getSubdomain(hash, "webp", true)
+            "https://$subdomain.$domain/webpbigtn/${thumbPathFromHash(hash)}/$hash.webp"
         }
         description = buildString {
             append("Gallery ID: ${id.content}", "\n")
@@ -575,9 +553,7 @@ class Hitomi(
     }
 
     override fun mangaDetailsRequest(manga: SManga): Request {
-        val id = manga.url
-            .substringAfterLast("-")
-            .substringBefore(".")
+        val id = manga.url.substringAfterLast("-").substringBefore(".")
 
         return GET("$ltnUrl/galleries/$id.js", headers)
     }
@@ -598,11 +574,7 @@ class Hitomi(
                 name = "Chapter"
                 url = gallery.galleryurl
                 scanlator = "${gallery.files.size} Pages"
-                date_upload = try {
-                    dateFormat.parse(gallery.date.substringBeforeLast("-"))!!.time
-                } catch (_: ParseException) {
-                    0L
-                }
+                date_upload = dateFormat.tryParse(gallery.date.substringBeforeLast("-"))
             },
         )
     }
@@ -612,24 +584,18 @@ class Hitomi(
     override fun getChapterUrl(chapter: SChapter) = baseUrl + chapter.url
 
     override fun pageListRequest(chapter: SChapter): Request {
-        val id = chapter.url
-            .substringAfterLast("-")
-            .substringBefore(".")
+        val id = chapter.url.substringAfterLast("-").substringBefore(".")
 
         return GET("$ltnUrl/galleries/$id.js", headers)
     }
 
     override fun pageListParse(response: Response) = runBlocking {
         val gallery = response.parseScriptAs<Gallery>()
-        val id = gallery.galleryurl
-            .substringAfterLast("-")
-            .substringBefore(".")
+        val id = gallery.galleryurl.substringAfterLast("-").substringBefore(".")
 
         gallery.files.mapIndexed { idx, img ->
             val hash = img.hash
-
-            val typePref = imageType()
-            val ext = if (img.haswebp && typePref == "webp") "webp" else "avif"
+            val ext = imageType()
 
             val commonId = commonImageId()
             val imageId = imageIdFromHash(hash)
@@ -646,10 +612,9 @@ class Hitomi(
     }
 
     override fun imageRequest(page: Page): Request {
-        val imageHeaders = headersBuilder()
-            .set("Accept", "image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
-            .set("Referer", page.url)
-            .build()
+        val imageHeaders =
+            headersBuilder().set("Accept", "image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
+                .set("Referer", page.url).build()
 
         return GET(page.imageUrl!!, imageHeaders)
     }
@@ -664,13 +629,12 @@ class Hitomi(
         return json.decodeFromString(transformed)
     }
 
-    private suspend fun Call.awaitSuccess() =
-        await().also {
-            require(it.isSuccessful) {
-                it.close()
-                "HTTP error ${it.code}"
-            }
+    private suspend fun Call.awaitSuccess() = await().also {
+        require(it.isSuccessful) {
+            it.close()
+            "HTTP error ${it.code}"
         }
+    }
 
     // ------------------ gg.js ------------------
     private var scriptLastRetrieval: Long? = null
@@ -747,36 +711,6 @@ class Hitomi(
             summary = "Clear chapter cache to apply changes"
             setDefaultValue("webp")
         }.also(screen::addPreference)
-    }
-
-    private fun List<Int>.toBytesList(): ByteArray = this.map { it.toByte() }.toByteArray()
-    private val signatureOne = listOf(0xFF, 0x0A).toBytesList()
-    private val signatureTwo =
-        listOf(0x00, 0x00, 0x00, 0x0C, 0x4A, 0x58, 0x4C, 0x20, 0x0D, 0x0A, 0x87, 0x0A).toBytesList()
-
-    fun ByteArray.startsWith(byteArray: ByteArray): Boolean {
-        if (this.size < byteArray.size) return false
-        return this.sliceArray(byteArray.indices).contentEquals(byteArray)
-    }
-
-    private fun jxlContentTypeInterceptor(chain: Interceptor.Chain): Response {
-        val response = chain.proceed(chain.request())
-        if (response.headers["Content-Type"] != "application/octet-stream") {
-            return response
-        }
-
-        val bytesPeek = max(signatureOne.size, signatureTwo.size).toLong()
-        val bytesArray = response.peekBody(bytesPeek).bytes()
-        if (!(bytesArray.startsWith(signatureOne) || bytesArray.startsWith(signatureTwo))) {
-            return response
-        }
-
-        val type = "image/jxl"
-        val body = response.body.bytes().toResponseBody(type.toMediaType())
-        return response.newBuilder()
-            .body(body)
-            .header("Content-Type", type)
-            .build()
     }
 
     private fun streamResetRetry(chain: Interceptor.Chain): Response {
