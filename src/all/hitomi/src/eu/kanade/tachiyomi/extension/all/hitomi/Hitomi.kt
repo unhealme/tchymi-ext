@@ -16,22 +16,21 @@ import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import eu.kanade.tachiyomi.source.online.HttpSource
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.tryParse
+import keiyoushi.utils.parseAs
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.json.Json
 import okhttp3.CacheControl
 import okhttp3.Call
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.internal.http2.StreamResetException
 import rx.Observable
-import uy.kohesive.injekt.injectLazy
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
@@ -57,12 +56,9 @@ class Hitomi(
 
     override val supportsLatest = true
 
-    private val json: Json by injectLazy()
-
-    private val REGEX_IMAGE_URL = """https://[wa]\d\.$domain/\d+/\d+/([0-9a-f]{64})\.\1""".toRegex()
-
-    override val client =
-        network.cloudflareClient.newBuilder().addInterceptor(::updateImageUrlInterceptor).apply {
+    override val client = network.cloudflareClient.newBuilder()
+        .addInterceptor(::updateImageUrlInterceptor)
+        .apply {
             interceptors().add(0, ::streamResetRetry)
         }.build()
 
@@ -540,8 +536,9 @@ class Hitomi(
             ).joinToString()
         thumbnail_url = files.first().let {
             val hash = it.hash
-            val subdomain = getSubdomain(hash, "webp", true)
-            "https://$subdomain.$domain/webpbigtn/${thumbPathFromHash(hash)}/$hash.webp"
+            val ext = imageType()
+            val subdomain = getSubdomain(hash, ext, true)
+            "https://$subdomain.$domain/${ext}bigtn/${thumbPathFromHash(hash)}/$hash.$ext"
         }
         description = buildString {
             append("Gallery ID: ${id.content}", "\n")
@@ -589,19 +586,16 @@ class Hitomi(
         return GET("$ltnUrl/galleries/$id.js", headers)
     }
 
-    override fun pageListParse(response: Response) = runBlocking {
+    override fun pageListParse(response: Response): List<Page> {
         val gallery = response.parseScriptAs<Gallery>()
         val id = gallery.galleryurl.substringAfterLast("-").substringBefore(".")
 
-        gallery.files.mapIndexed { idx, img ->
-            val hash = img.hash
-            val ext = imageType()
-
-            val commonId = commonImageId()
-            val imageId = imageIdFromHash(hash)
-            val subdomain = getSubdomain(hash, ext, false)
-
-            val imageUrl = "https://$subdomain.$domain/$commonId$imageId/$hash.$ext"
+        return gallery.files.mapIndexed { idx, img ->
+            // actual logic in updateImageUrlInterceptor
+            val imageUrl = "http://127.0.0.1".toHttpUrl().newBuilder()
+                .fragment(img.hash)
+                .build()
+                .toString()
 
             Page(
                 idx,
@@ -626,7 +620,7 @@ class Hitomi(
         val body = use { it.body.string() }
         val transformed = transform(body)
 
-        return json.decodeFromString(transformed)
+        return transformed.parseAs()
     }
 
     private suspend fun Call.awaitSuccess() = await().also {
@@ -729,34 +723,36 @@ class Hitomi(
 
     private fun updateImageUrlInterceptor(chain: Interceptor.Chain): Response {
         val request = chain.request()
-
-        val cleanUrl = request.url.run { "$scheme://$host$encodedPath" }
-        REGEX_IMAGE_URL.matchEntire(cleanUrl)?.let { match ->
-            val (ext, hash) = match.destructured
-
-            val commonId = runBlocking { commonImageId() }
-            val imageId = imageIdFromHash(hash)
-            val subdomain = runBlocking { getSubdomain(hash, ext, false) }
-
-            val newUrl = "https://$subdomain.$domain/$commonId$imageId/$hash.$ext"
-            val newRequest = request.newBuilder().url(newUrl).build()
-            return chain.proceed(newRequest)
+        if (request.url.host != "127.0.0.1") {
+            return chain.proceed(request)
         }
 
-        return chain.proceed(request)
+        val hash = request.url.fragment!!
+        val ext = imageType()
+        val commonId = runBlocking { commonImageId() }
+        val imageId = imageIdFromHash(hash)
+        val subdomain = runBlocking { getSubdomain(hash, ext, false) }
+
+        val imageUrl = "https://$subdomain.$domain/$commonId$imageId/$hash.$ext"
+
+        val newRequest = request.newBuilder()
+            .url(imageUrl)
+            .build()
+
+        return chain.proceed(newRequest)
     }
 
-    override fun popularMangaParse(response: Response) = throw UnsupportedOperationException()
-    override fun popularMangaRequest(page: Int) = throw UnsupportedOperationException()
-    override fun latestUpdatesRequest(page: Int) = throw UnsupportedOperationException()
-    override fun latestUpdatesParse(response: Response) = throw UnsupportedOperationException()
-    override fun searchMangaRequest(page: Int, query: String, filters: FilterList) =
-        throw UnsupportedOperationException()
+override fun popularMangaParse(response: Response) = throw UnsupportedOperationException()
+override fun popularMangaRequest(page: Int) = throw UnsupportedOperationException()
+override fun latestUpdatesRequest(page: Int) = throw UnsupportedOperationException()
+override fun latestUpdatesParse(response: Response) = throw UnsupportedOperationException()
+override fun searchMangaRequest(page: Int, query: String, filters: FilterList) =
+    throw UnsupportedOperationException()
 
-    override fun searchMangaParse(response: Response) = throw UnsupportedOperationException()
-    override fun imageUrlParse(response: Response) = throw UnsupportedOperationException()
+override fun searchMangaParse(response: Response) = throw UnsupportedOperationException()
+override fun imageUrlParse(response: Response) = throw UnsupportedOperationException()
 
-    companion object {
-        const val PREF_IMAGETYPE = "pref_image_type"
-    }
+companion object {
+    const val PREF_IMAGETYPE = "pref_image_type"
+}
 }
