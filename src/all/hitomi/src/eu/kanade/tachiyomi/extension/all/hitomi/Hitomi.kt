@@ -15,8 +15,8 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import eu.kanade.tachiyomi.source.online.HttpSource
 import keiyoushi.utils.getPreferencesLazy
-import keiyoushi.utils.tryParse
 import keiyoushi.utils.parseAs
+import keiyoushi.utils.tryParse
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -56,9 +56,8 @@ class Hitomi(
 
     override val supportsLatest = true
 
-    override val client = network.cloudflareClient.newBuilder()
-        .addInterceptor(::updateImageUrlInterceptor)
-        .apply {
+    override val client =
+        network.cloudflareClient.newBuilder().addInterceptor(::updateImageUrlInterceptor).apply {
             interceptors().add(0, ::streamResetRetry)
         }.build()
 
@@ -592,10 +591,8 @@ class Hitomi(
 
         return gallery.files.mapIndexed { idx, img ->
             // actual logic in updateImageUrlInterceptor
-            val imageUrl = "http://127.0.0.1".toHttpUrl().newBuilder()
-                .fragment(img.hash)
-                .build()
-                .toString()
+            val imageUrl =
+                "http://127.0.0.1".toHttpUrl().newBuilder().fragment(img.hash).build().toString()
 
             Page(
                 idx,
@@ -735,24 +732,22 @@ class Hitomi(
 
         val imageUrl = "https://$subdomain.$domain/$commonId$imageId/$hash.$ext"
 
-        val newRequest = request.newBuilder()
-            .url(imageUrl)
-            .build()
+        val newRequest = request.newBuilder().url(imageUrl).build()
 
         return chain.proceed(newRequest)
     }
 
-override fun popularMangaParse(response: Response) = throw UnsupportedOperationException()
-override fun popularMangaRequest(page: Int) = throw UnsupportedOperationException()
-override fun latestUpdatesRequest(page: Int) = throw UnsupportedOperationException()
-override fun latestUpdatesParse(response: Response) = throw UnsupportedOperationException()
-override fun searchMangaRequest(page: Int, query: String, filters: FilterList) =
-    throw UnsupportedOperationException()
+    override fun popularMangaParse(response: Response) = throw UnsupportedOperationException()
+    override fun popularMangaRequest(page: Int) = throw UnsupportedOperationException()
+    override fun latestUpdatesRequest(page: Int) = throw UnsupportedOperationException()
+    override fun latestUpdatesParse(response: Response) = throw UnsupportedOperationException()
+    override fun searchMangaRequest(page: Int, query: String, filters: FilterList) =
+        throw UnsupportedOperationException()
 
-override fun searchMangaParse(response: Response) = throw UnsupportedOperationException()
-override fun imageUrlParse(response: Response) = throw UnsupportedOperationException()
+    override fun searchMangaParse(response: Response) = throw UnsupportedOperationException()
+    override fun imageUrlParse(response: Response) = throw UnsupportedOperationException()
 
-companion object {
-    const val PREF_IMAGETYPE = "pref_image_type"
-}
+    companion object {
+        const val PREF_IMAGETYPE = "pref_image_type"
+    }
 }
